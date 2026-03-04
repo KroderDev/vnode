@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/KroderDev/vnode/compare/v1.0.1...v1.1.0) (2026-03-04)
+
+
+### Features
+
+* switch node registration to host cluster and add managed label ([fc2a1be](https://github.com/KroderDev/vnode/commit/fc2a1be2075f5049b7ec801cdbe702d0df3fc503))
+
 ## [1.0.1](https://github.com/KroderDev/vnode/compare/v1.0.0...v1.0.1) (2026-03-04)
 
 
