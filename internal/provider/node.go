@@ -23,6 +23,7 @@ func BuildNode(nodeName string, cpu, memory resource.Quantity) *corev1.Node {
 				"vnode.kroderdev.io/managed":       "true",
 			},
 		},
+		Spec: corev1.NodeSpec{},
 		Status: corev1.NodeStatus{
 			Phase: corev1.NodeRunning,
 			Conditions: []corev1.NodeCondition{

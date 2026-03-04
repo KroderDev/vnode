@@ -61,13 +61,13 @@ func TestTranslate(t *testing.T) {
 				t.Error("RuntimeClassName should be kata")
 			}
 			if result.Spec.NodeName != "" {
-				t.Error("NodeName should be cleared")
+				t.Errorf("NodeName = %q, want empty", result.Spec.NodeName)
 			}
 			if result.Spec.ServiceAccountName != "" {
 				t.Error("ServiceAccountName should be cleared")
 			}
 			if result.Spec.Tolerations != nil {
-				t.Error("Tolerations should be cleared")
+				t.Errorf("Tolerations should be nil, got %v", result.Spec.Tolerations)
 			}
 			if result.Spec.AutomountServiceAccountToken == nil || *result.Spec.AutomountServiceAccountToken != false {
 				t.Error("AutomountServiceAccountToken should be false")
