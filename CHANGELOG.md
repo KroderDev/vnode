@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/KroderDev/vnode/compare/v1.0.0...v1.0.1) (2026-03-04)
+
+
+### CI/CD
+
+* fix ghcr.io image ([99e4067](https://github.com/KroderDev/vnode/commit/99e40672d399df979dc711729e3edf843b4268b0))
+
 ## 1.0.0 (2026-03-04)
 
 
