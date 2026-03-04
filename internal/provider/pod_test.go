@@ -15,7 +15,7 @@ import (
 )
 
 func newTestProvider(objects ...runtime.Object) *Provider {
-	client := fake.NewSimpleClientset(objects...)
+	client := fake.NewClientset(objects...)
 	trans := translator.New("host-ns", "kata", "vnode-01")
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	return New(log, client, trans, "host-ns")
