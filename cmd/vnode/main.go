@@ -65,9 +65,9 @@ func main() {
 	nodeController, err := vknode.NewNodeController(
 		prov,
 		node,
-		vclusterClient.CoreV1().Nodes(),
+		hostClient.CoreV1().Nodes(),
 		vknode.WithNodeEnableLeaseV1(
-			vclusterClient.CoordinationV1().Leases("kube-node-lease"),
+			hostClient.CoordinationV1().Leases("kube-node-lease"),
 			40,
 		),
 		vknode.WithNodePingInterval(10*time.Second),

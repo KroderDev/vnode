@@ -8,18 +8,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// BuildNode constructs the virtual Node object that will be registered in the vcluster.
+// BuildNode constructs the virtual Node object that will be registered in the host cluster.
 func BuildNode(nodeName string, cpu, memory resource.Quantity) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
 			Labels: map[string]string{
-				"type":                           "virtual",
-				"kubernetes.io/role":             "agent",
-				"node.kubernetes.io/instance-type": "vnode",
-				"beta.kubernetes.io/os":          "linux",
-				"kubernetes.io/os":               "linux",
-				"kubernetes.io/arch":             "amd64",
+				"type":                             "virtual",
+				"kubernetes.io/role":               "agent",
+				"node.kubernetes.io/instance-type":  "vnode",
+				"beta.kubernetes.io/os":            "linux",
+				"kubernetes.io/os":                 "linux",
+				"kubernetes.io/arch":               "amd64",
+				"vnode.kroderdev.io/managed":       "true",
 			},
 		},
 		Status: corev1.NodeStatus{
