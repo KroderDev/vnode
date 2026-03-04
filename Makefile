@@ -3,7 +3,7 @@
 all: tidy vet lint test build
 
 build:
-	go build -o bin/vnode ./cmd/vnode
+	go build ./cmd/vnode
 
 test:
 	go test ./... -v
