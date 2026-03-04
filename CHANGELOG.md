@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/KroderDev/vnode/compare/v1.1.0...v1.1.1) (2026-03-04)
+
+
+### Bug Fixes
+
+* **client:** vnode registrates on vcluster, not in host ([0656ee9](https://github.com/KroderDev/vnode/commit/0656ee9789cd2467bc4adee6214423f032a28fb3))
+
 ## [1.1.0](https://github.com/KroderDev/vnode/compare/v1.0.1...v1.1.0) (2026-03-04)
 
 
