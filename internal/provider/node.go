@@ -21,6 +21,7 @@ func BuildNode(nodeName string, cpu, memory resource.Quantity) *corev1.Node {
 				"kubernetes.io/os":                 "linux",
 				"kubernetes.io/arch":               "amd64",
 				"vnode.kroderdev.io/managed":       "true",
+				"vnode.kroderdev.io/none":          "true",
 			},
 		},
 		Spec: corev1.NodeSpec{},
