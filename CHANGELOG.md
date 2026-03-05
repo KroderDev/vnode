@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0](https://github.com/KroderDev/vnode/compare/v1.2.0...v1.3.0) (2026-03-05)
+
+
+### Features
+
+* **metadata:** remove none tag ([2aa2580](https://github.com/KroderDev/vnode/commit/2aa258016f10c10a89ad224e06194463ed4df526))
+
+
+### CI/CD
+
+* add permissions to ci.yml workflow ([19cd3a7](https://github.com/KroderDev/vnode/commit/19cd3a7b1bbc28ae3f8821989c23d36c0d2844ea))
+
 ## [1.2.0](https://github.com/KroderDev/vnode/compare/v1.1.1...v1.2.0) (2026-03-04)
 
 
