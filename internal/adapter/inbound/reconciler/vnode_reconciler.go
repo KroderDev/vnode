@@ -8,6 +8,7 @@ import (
 	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/ports"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -50,6 +51,14 @@ func (r *VNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			Memory: cr.Spec.Capacity.Memory,
 			Pods:   cr.Spec.Capacity.Pods,
 		},
+	}
+	for _, c := range cr.Status.Conditions {
+		node.Conditions = append(node.Conditions, model.NodeCondition{
+			Type:    model.NodeConditionType(c.Type),
+			Status:  c.Status == metav1.ConditionTrue,
+			Reason:  c.Reason,
+			Message: c.Message,
+		})
 	}
 
 	if err := r.NodeSvc.UpdateStatus(ctx, node); err != nil {

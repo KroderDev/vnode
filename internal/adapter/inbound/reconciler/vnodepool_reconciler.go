@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/kroderdev/vnode/api/v1alpha1"
 	"github.com/kroderdev/vnode/internal/domain/model"
@@ -10,6 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -87,25 +89,34 @@ func (r *VNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Validate pool spec
 	if err := pool.Validate(); err != nil {
 		logger.Error(err, "invalid pool spec")
-		cr.Status.Phase = string(model.PoolPhaseFailed)
-		_ = r.Status().Update(ctx, &cr)
+		_ = r.updatePoolStatus(ctx, cr.Namespace, cr.Name, func(status *v1alpha1.VNodePoolStatus) {
+			status.Phase = string(model.PoolPhaseFailed)
+		})
 		return ctrl.Result{}, nil // Don't requeue invalid specs
 	}
 
 	result, err := r.PoolMgr.Reconcile(ctx, pool)
 	if err != nil {
 		logger.Error(err, "failed to reconcile pool")
-		cr.Status.Phase = string(model.PoolPhaseFailed)
-		_ = r.Status().Update(ctx, &cr)
+		_ = r.updatePoolStatus(ctx, cr.Namespace, cr.Name, func(status *v1alpha1.VNodePoolStatus) {
+			status.Phase = string(model.PoolPhaseFailed)
+		})
 		return ctrl.Result{}, fmt.Errorf("reconciling pool %s: %w", pool.Name, err)
 	}
 
-	cr.Status.Phase = string(result.Phase)
-	cr.Status.ReadyNodes = result.ReadyNodes
-	cr.Status.TotalNodes = result.NodeCount
-
-	if err := r.Status().Update(ctx, &cr); err != nil {
+	if err := r.updatePoolStatus(ctx, cr.Namespace, cr.Name, func(status *v1alpha1.VNodePoolStatus) {
+		status.Phase = string(result.Phase)
+		status.ReadyNodes = result.ReadyNodes
+		status.TotalNodes = result.NodeCount
+	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating pool status: %w", err)
+	}
+
+	if result.Phase != model.PoolPhaseReady && !cr.DeletionTimestamp.IsZero() {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+	if result.Phase != model.PoolPhaseReady {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -121,8 +132,9 @@ func (r *VNodePoolReconciler) handleDeletion(ctx context.Context, cr *v1alpha1.V
 	logger.Info("handling VNodePool deletion", "name", cr.Name)
 
 	// Set phase to Deleting
-	cr.Status.Phase = string(model.PoolPhaseDeleting)
-	_ = r.Status().Update(ctx, cr)
+	_ = r.updatePoolStatus(ctx, cr.Namespace, cr.Name, func(status *v1alpha1.VNodePoolStatus) {
+		status.Phase = string(model.PoolPhaseDeleting)
+	})
 
 	// Reconcile with 0 nodes to deprovision all
 	pool := crToPoolModel(cr)
@@ -134,9 +146,15 @@ func (r *VNodePoolReconciler) handleDeletion(ctx context.Context, cr *v1alpha1.V
 		return ctrl.Result{}, fmt.Errorf("cleaning up pool %s: %w", cr.Name, err)
 	}
 
-	// Remove finalizer
-	controllerutil.RemoveFinalizer(cr, poolFinalizer)
-	if err := r.Update(ctx, cr); err != nil {
+	// Remove finalizer on the latest resource version to avoid status-update races.
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current v1alpha1.VNodePool
+		if err := r.Get(ctx, client.ObjectKeyFromObject(cr), &current); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		controllerutil.RemoveFinalizer(&current, poolFinalizer)
+		return r.Update(ctx, &current)
+	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
 	}
 
@@ -177,4 +195,15 @@ func (r *VNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1alpha1.VNodePool{}).
 		Owns(&v1alpha1.VNode{}).
 		Complete(r)
+}
+
+func (r *VNodePoolReconciler) updatePoolStatus(ctx context.Context, namespace, name string, mutate func(*v1alpha1.VNodePoolStatus)) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current v1alpha1.VNodePool
+		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &current); err != nil {
+			return err
+		}
+		mutate(&current.Status)
+		return r.Status().Update(ctx, &current)
+	})
 }

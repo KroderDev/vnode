@@ -8,7 +8,9 @@ import (
 	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/ports"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -154,14 +156,17 @@ func (r *NodeRepository) Save(ctx context.Context, node model.VNode) error {
 		if createErr := r.client.Create(ctx, &cr); createErr != nil {
 			return fmt.Errorf("creating VNode CR: %w", createErr)
 		}
-		// Update status after create
-		cr.Status.Phase = string(node.Phase)
-		return r.client.Status().Update(ctx, &cr)
+		applyNodeStatus(&cr, node)
+		if err := r.client.Status().Update(ctx, &cr); err != nil {
+			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+				return r.updateStatus(ctx, node)
+			}
+			return err
+		}
+		return nil
 	}
 
-	// Update existing
-	cr.Status.Phase = string(node.Phase)
-	return r.client.Status().Update(ctx, &cr)
+	return r.updateStatus(ctx, node)
 }
 
 func (r *NodeRepository) Delete(ctx context.Context, namespace, name string) error {
@@ -218,4 +223,41 @@ func crToNode(cr *v1alpha1.VNode) model.VNode {
 	}
 
 	return node
+}
+
+func (r *NodeRepository) updateStatus(ctx context.Context, node model.VNode) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current v1alpha1.VNode
+		if err := r.client.Get(ctx, client.ObjectKey{Namespace: node.Namespace, Name: node.Name}, &current); err != nil {
+			return err
+		}
+
+		applyNodeStatus(&current, node)
+
+		if err := r.client.Status().Update(ctx, &current); err != nil {
+			if apierrors.IsConflict(err) {
+				return err
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func applyNodeStatus(cr *v1alpha1.VNode, node model.VNode) {
+	cr.Status.Phase = string(node.Phase)
+	cr.Status.Conditions = make([]metav1.Condition, 0, len(node.Conditions))
+	for _, c := range node.Conditions {
+		conditionStatus := metav1.ConditionFalse
+		if c.Status {
+			conditionStatus = metav1.ConditionTrue
+		}
+		cr.Status.Conditions = append(cr.Status.Conditions, metav1.Condition{
+			Type:               string(c.Type),
+			Status:             conditionStatus,
+			Reason:             c.Reason,
+			Message:            c.Message,
+			LastTransitionTime: metav1.Now(),
+		})
+	}
 }

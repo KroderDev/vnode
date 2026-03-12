@@ -1,12 +1,15 @@
-.PHONY: build test lint vet tidy docker generate manifests install run
+.PHONY: build test test-e2e lint vet tidy docker generate manifests install run
 
 all: tidy vet lint test build
 
 build:
-	go build -o bin/vnode ./cmd/vnode
+	go build -o bin/ ./cmd/vnode
 
 test:
 	go test ./... -v
+
+test-e2e:
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path)" go test ./e2e/... -v
 
 lint:
 	golangci-lint run ./...

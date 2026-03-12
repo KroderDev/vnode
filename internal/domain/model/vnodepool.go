@@ -24,9 +24,9 @@ const (
 
 // TenantRef identifies the target vcluster for a pool.
 type TenantRef struct {
-	VClusterName     string `json:"vclusterName"`
+	VClusterName      string `json:"vclusterName"`
 	VClusterNamespace string `json:"vclusterNamespace"`
-	KubeconfigSecret string `json:"kubeconfigSecret"`
+	KubeconfigSecret  string `json:"kubeconfigSecret"`
 }
 
 // Taint models a node taint without importing Kubernetes types into the domain.
