@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,10 +26,22 @@ type VNodePoolSpec struct {
 	// +kubebuilder:default=kata
 	IsolationBackend string `json:"isolationBackend,omitempty"`
 
+	// RuntimeClassName overrides the runtime class selected by isolationBackend when set.
+	// +optional
+	RuntimeClassName string `json:"runtimeClassName,omitempty"`
+
 	// NodeSelector specifies host node labels for dedicated/burstable mode.
 	// Required when mode is "dedicated".
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Taints applied to virtual nodes for tenant scheduling control.
+	// +optional
+	Taints []corev1.Taint `json:"taints,omitempty"`
+
+	// Tolerations applied to translated host pods scheduled through this pool.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 }
 
 // TenantRef identifies the target vcluster.

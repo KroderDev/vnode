@@ -29,6 +29,22 @@ type TenantRef struct {
 	KubeconfigSecret string `json:"kubeconfigSecret"`
 }
 
+// Taint models a node taint without importing Kubernetes types into the domain.
+type Taint struct {
+	Key    string
+	Value  string
+	Effect string
+}
+
+// Toleration models a pod toleration without importing Kubernetes types into the domain.
+type Toleration struct {
+	Key               string
+	Operator          string
+	Value             string
+	Effect            string
+	TolerationSeconds *int64
+}
+
 // VNodePool represents a pool of virtual nodes for a single tenant.
 type VNodePool struct {
 	ID               string
@@ -37,9 +53,12 @@ type VNodePool struct {
 	TenantRef        TenantRef
 	Mode             PoolMode
 	IsolationBackend string
+	RuntimeClassName string
 	NodeCount        int32
 	PerNodeResources ResourceList
 	NodeSelector     map[string]string // For dedicated mode: host node labels
+	Taints           []Taint
+	Tolerations      []Toleration
 	Phase            PoolPhase
 	ReadyNodes       int32
 	Nodes            []string // VNode names

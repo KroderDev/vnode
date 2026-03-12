@@ -62,6 +62,25 @@ func (r *PoolRepository) List(ctx context.Context) ([]model.VNodePool, error) {
 }
 
 func crToPool(cr *v1alpha1.VNodePool) model.VNodePool {
+	taints := make([]model.Taint, 0, len(cr.Spec.Taints))
+	for _, t := range cr.Spec.Taints {
+		taints = append(taints, model.Taint{
+			Key:    t.Key,
+			Value:  t.Value,
+			Effect: string(t.Effect),
+		})
+	}
+	tolerations := make([]model.Toleration, 0, len(cr.Spec.Tolerations))
+	for _, t := range cr.Spec.Tolerations {
+		tolerations = append(tolerations, model.Toleration{
+			Key:               t.Key,
+			Operator:          string(t.Operator),
+			Value:             t.Value,
+			Effect:            string(t.Effect),
+			TolerationSeconds: t.TolerationSeconds,
+		})
+	}
+
 	return model.VNodePool{
 		ID:        string(cr.UID),
 		Name:      cr.Name,
@@ -73,6 +92,7 @@ func crToPool(cr *v1alpha1.VNodePool) model.VNodePool {
 		},
 		Mode:             model.PoolMode(cr.Spec.Mode),
 		IsolationBackend: cr.Spec.IsolationBackend,
+		RuntimeClassName: cr.Spec.RuntimeClassName,
 		NodeCount:        cr.Spec.NodeCount,
 		PerNodeResources: model.ResourceList{
 			CPU:    cr.Spec.PerNodeResources.CPU,
@@ -80,6 +100,8 @@ func crToPool(cr *v1alpha1.VNodePool) model.VNodePool {
 			Pods:   cr.Spec.PerNodeResources.Pods,
 		},
 		NodeSelector:    cr.Spec.NodeSelector,
+		Taints:          taints,
+		Tolerations:     tolerations,
 		Phase:           model.PoolPhase(cr.Status.Phase),
 		ReadyNodes:      cr.Status.ReadyNodes,
 		DeletionPending: !cr.DeletionTimestamp.IsZero(),

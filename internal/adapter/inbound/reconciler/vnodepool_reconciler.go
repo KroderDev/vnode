@@ -8,12 +8,39 @@ import (
 	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/ports"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+func mapTaints(in []corev1.Taint) []model.Taint {
+	out := make([]model.Taint, 0, len(in))
+	for _, t := range in {
+		out = append(out, model.Taint{
+			Key:    t.Key,
+			Value:  t.Value,
+			Effect: string(t.Effect),
+		})
+	}
+	return out
+}
+
+func mapTolerations(in []corev1.Toleration) []model.Toleration {
+	out := make([]model.Toleration, 0, len(in))
+	for _, t := range in {
+		out = append(out, model.Toleration{
+			Key:               t.Key,
+			Operator:          string(t.Operator),
+			Value:             t.Value,
+			Effect:            string(t.Effect),
+			TolerationSeconds: t.TolerationSeconds,
+		})
+	}
+	return out
+}
 
 const poolFinalizer = "vnode.kroderdev.io/pool-cleanup"
 
@@ -129,6 +156,7 @@ func crToPoolModel(cr *v1alpha1.VNodePool) model.VNodePool {
 		},
 		Mode:             model.PoolMode(cr.Spec.Mode),
 		IsolationBackend: cr.Spec.IsolationBackend,
+		RuntimeClassName: cr.Spec.RuntimeClassName,
 		NodeCount:        cr.Spec.NodeCount,
 		PerNodeResources: model.ResourceList{
 			CPU:    cr.Spec.PerNodeResources.CPU,
@@ -136,6 +164,8 @@ func crToPoolModel(cr *v1alpha1.VNodePool) model.VNodePool {
 			Pods:   cr.Spec.PerNodeResources.Pods,
 		},
 		NodeSelector:    cr.Spec.NodeSelector,
+		Taints:          mapTaints(cr.Spec.Taints),
+		Tolerations:     mapTolerations(cr.Spec.Tolerations),
 		Phase:           model.PoolPhase(cr.Status.Phase),
 		ReadyNodes:      cr.Status.ReadyNodes,
 		DeletionPending: !cr.DeletionTimestamp.IsZero(),
