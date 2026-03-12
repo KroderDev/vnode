@@ -16,6 +16,9 @@ type NodeConditionType string
 const (
 	NodeConditionRegistered NodeConditionType = "Registered"
 	NodeConditionReady      NodeConditionType = "Ready"
+	NodeConditionKubeconfig NodeConditionType = "KubeconfigResolved"
+	NodeConditionLease      NodeConditionType = "LeaseActive"
+	NodeConditionDegraded   NodeConditionType = "Degraded"
 )
 
 // NodeCondition describes the state of a VNode at a point in time.
@@ -32,6 +35,8 @@ type VNode struct {
 	Name        string
 	Namespace   string
 	PoolName    string
+	TenantRef   TenantRef
+	Taints      []Taint
 	Phase       NodePhase
 	Capacity    ResourceList
 	Allocatable ResourceList

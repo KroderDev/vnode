@@ -19,8 +19,8 @@ type ClusterClient interface {
 // NodeRegistrar registers and manages virtual nodes in a target cluster.
 type NodeRegistrar interface {
 	Register(ctx context.Context, node model.VNode, tenant model.TenantRef) error
-	Deregister(ctx context.Context, node model.VNode) error
-	UpdateNodeStatus(ctx context.Context, node model.VNode) error
+	Deregister(ctx context.Context, node model.VNode, tenant model.TenantRef) error
+	UpdateNodeStatus(ctx context.Context, node model.VNode, tenant model.TenantRef) error
 }
 
 // IsolationRuntime provides the runtime class name for pod isolation.

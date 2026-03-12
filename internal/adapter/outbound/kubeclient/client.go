@@ -20,6 +20,12 @@ var (
 	_ ports.NodeRepository = (*NodeRepository)(nil)
 )
 
+const (
+	annotationVClusterName      = "vnode.kroderdev.io/vcluster-name"
+	annotationVClusterNamespace = "vnode.kroderdev.io/vcluster-namespace"
+	annotationKubeconfigSecret  = "vnode.kroderdev.io/kubeconfig-secret"
+)
+
 // PoolRepository implements ports.PoolRepository using K8s VNodePool CRs.
 type PoolRepository struct {
 	client client.Client
@@ -143,6 +149,11 @@ func (r *NodeRepository) Save(ctx context.Context, node model.VNode) error {
 				Labels: map[string]string{
 					"vnode.kroderdev.io/pool": node.PoolName,
 				},
+				Annotations: map[string]string{
+					annotationVClusterName:      node.TenantRef.VClusterName,
+					annotationVClusterNamespace: node.TenantRef.VClusterNamespace,
+					annotationKubeconfigSecret:  node.TenantRef.KubeconfigSecret,
+				},
 			},
 			Spec: v1alpha1.VNodeSpec{
 				PoolRef: node.PoolName,
@@ -164,6 +175,16 @@ func (r *NodeRepository) Save(ctx context.Context, node model.VNode) error {
 			return err
 		}
 		return nil
+	}
+
+	if cr.Annotations == nil {
+		cr.Annotations = map[string]string{}
+	}
+	cr.Annotations[annotationVClusterName] = node.TenantRef.VClusterName
+	cr.Annotations[annotationVClusterNamespace] = node.TenantRef.VClusterNamespace
+	cr.Annotations[annotationKubeconfigSecret] = node.TenantRef.KubeconfigSecret
+	if err := r.client.Update(ctx, &cr); err != nil {
+		return err
 	}
 
 	return r.updateStatus(ctx, node)
@@ -200,7 +221,12 @@ func crToNode(cr *v1alpha1.VNode) model.VNode {
 		Name:      cr.Name,
 		Namespace: cr.Namespace,
 		PoolName:  cr.Spec.PoolRef,
-		Phase:     model.NodePhase(cr.Status.Phase),
+		TenantRef: model.TenantRef{
+			VClusterName:      cr.Annotations[annotationVClusterName],
+			VClusterNamespace: cr.Annotations[annotationVClusterNamespace],
+			KubeconfigSecret:  cr.Annotations[annotationKubeconfigSecret],
+		},
+		Phase: model.NodePhase(cr.Status.Phase),
 		Capacity: model.ResourceList{
 			CPU:    cr.Spec.Capacity.CPU,
 			Memory: cr.Spec.Capacity.Memory,

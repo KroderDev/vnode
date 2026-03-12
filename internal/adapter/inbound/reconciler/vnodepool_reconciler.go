@@ -10,6 +10,7 @@ import (
 	"github.com/kroderdev/vnode/internal/domain/ports"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -91,6 +92,8 @@ func (r *VNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(err, "invalid pool spec")
 		_ = r.updatePoolStatus(ctx, cr.Namespace, cr.Name, func(status *v1alpha1.VNodePoolStatus) {
 			status.Phase = string(model.PoolPhaseFailed)
+			setStatusCondition(&status.Conditions, "Ready", metav1.ConditionFalse, "ValidationFailed", err.Error())
+			setStatusCondition(&status.Conditions, "Degraded", metav1.ConditionTrue, "ValidationFailed", err.Error())
 		})
 		return ctrl.Result{}, nil // Don't requeue invalid specs
 	}
@@ -100,6 +103,8 @@ func (r *VNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(err, "failed to reconcile pool")
 		_ = r.updatePoolStatus(ctx, cr.Namespace, cr.Name, func(status *v1alpha1.VNodePoolStatus) {
 			status.Phase = string(model.PoolPhaseFailed)
+			setStatusCondition(&status.Conditions, "Ready", metav1.ConditionFalse, "ReconcileFailed", err.Error())
+			setStatusCondition(&status.Conditions, "Degraded", metav1.ConditionTrue, "ReconcileFailed", err.Error())
 		})
 		return ctrl.Result{}, fmt.Errorf("reconciling pool %s: %w", pool.Name, err)
 	}
@@ -108,6 +113,8 @@ func (r *VNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		status.Phase = string(result.Phase)
 		status.ReadyNodes = result.ReadyNodes
 		status.TotalNodes = result.NodeCount
+		setStatusCondition(&status.Conditions, "Ready", conditionStatus(result.Phase == model.PoolPhaseReady), phaseReason(result.Phase), fmt.Sprintf("%d/%d virtual nodes ready", result.ReadyNodes, result.NodeCount))
+		setStatusCondition(&status.Conditions, "Degraded", conditionStatus(result.Phase == model.PoolPhaseFailed), phaseReason(result.Phase), fmt.Sprintf("Pool phase is %s", result.Phase))
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating pool status: %w", err)
 	}
@@ -134,6 +141,8 @@ func (r *VNodePoolReconciler) handleDeletion(ctx context.Context, cr *v1alpha1.V
 	// Set phase to Deleting
 	_ = r.updatePoolStatus(ctx, cr.Namespace, cr.Name, func(status *v1alpha1.VNodePoolStatus) {
 		status.Phase = string(model.PoolPhaseDeleting)
+		setStatusCondition(&status.Conditions, "Ready", metav1.ConditionFalse, "Deleting", "Pool is being deleted")
+		setStatusCondition(&status.Conditions, "Degraded", metav1.ConditionFalse, "Deleting", "Pool cleanup in progress")
 	})
 
 	// Reconcile with 0 nodes to deprovision all
@@ -206,4 +215,49 @@ func (r *VNodePoolReconciler) updatePoolStatus(ctx context.Context, namespace, n
 		mutate(&current.Status)
 		return r.Status().Update(ctx, &current)
 	})
+}
+
+func setStatusCondition(conditions *[]metav1.Condition, conditionType string, status metav1.ConditionStatus, reason, message string) {
+	now := metav1.Now()
+	current := *conditions
+	for i := range current {
+		if current[i].Type != conditionType {
+			continue
+		}
+		current[i].Status = status
+		current[i].Reason = reason
+		current[i].Message = message
+		current[i].LastTransitionTime = now
+		*conditions = current
+		return
+	}
+	*conditions = append(current, metav1.Condition{
+		Type:               conditionType,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		LastTransitionTime: now,
+	})
+}
+
+func conditionStatus(ok bool) metav1.ConditionStatus {
+	if ok {
+		return metav1.ConditionTrue
+	}
+	return metav1.ConditionFalse
+}
+
+func phaseReason(phase model.PoolPhase) string {
+	switch phase {
+	case model.PoolPhaseReady:
+		return "PoolReady"
+	case model.PoolPhaseScaling:
+		return "PoolScaling"
+	case model.PoolPhaseDeleting:
+		return "PoolDeleting"
+	case model.PoolPhaseFailed:
+		return "PoolFailed"
+	default:
+		return "PoolPending"
+	}
 }

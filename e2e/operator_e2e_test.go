@@ -14,7 +14,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -30,12 +34,14 @@ import (
 )
 
 var (
-	suiteOnce     sync.Once
-	suiteEnv      *envtest.Environment
-	suiteClient   client.Client
-	suiteCancel   context.CancelFunc
-	suiteSetupErr error
-	suiteSkip     bool
+	suiteOnce      sync.Once
+	suiteEnv       *envtest.Environment
+	suiteCfg       *rest.Config
+	suiteClient    client.Client
+	suiteClientset kubernetes.Interface
+	suiteCancel    context.CancelFunc
+	suiteSetupErr  error
+	suiteSkip      bool
 )
 
 func TestVNodePoolLifecycleE2E(t *testing.T) {
@@ -92,6 +98,24 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		return nil
 	})
 
+	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
+		node, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-a-1", metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if node.Labels["vnode.kroderdev.io/pool"] != "pool-a" {
+			return errors.New("tenant node labels not applied")
+		}
+		lease, err := suiteClientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, "pool-a-1", metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if lease.Name != "pool-a-1" {
+			return errors.New("expected tenant lease for pool-a-1")
+		}
+		return nil
+	})
+
 	current := &v1alpha1.VNodePool{}
 	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pool), current); err != nil {
 		t.Fatalf("get pool for update: %v", err)
@@ -116,6 +140,16 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		if len(nodes.Items) != 1 {
 			return errors.New("expected 1 vnode after scale down")
 		}
+		if _, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-a-2", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
+			return err
+		} else if err == nil {
+			return errors.New("pool-a-2 tenant node still exists after scale down")
+		}
+		if _, err := suiteClientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, "pool-a-2", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
+			return err
+		} else if err == nil {
+			return errors.New("pool-a-2 lease still exists after scale down")
+		}
 		return nil
 	})
 
@@ -138,6 +172,16 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		if len(nodes.Items) != 0 {
 			return errors.New("vnodes still exist after pool deletion")
 		}
+		if _, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-a-1", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
+			return err
+		} else if err == nil {
+			return errors.New("tenant node still exists after pool deletion")
+		}
+		if _, err := suiteClientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, "pool-a-1", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
+			return err
+		} else if err == nil {
+			return errors.New("tenant lease still exists after pool deletion")
+		}
 		return nil
 	})
 
@@ -148,7 +192,7 @@ func TestDedicatedPoolValidationE2E(t *testing.T) {
 
 	ctx := context.Background()
 	ns := createNamespace(t, ctx, k8sClient, "tenant-b")
-	createKubeconfigSecret(t, ctx, k8sClient, ns, "tenant-b-kubeconfig")
+	createRawKubeconfigSecret(t, ctx, k8sClient, ns, "tenant-b-kubeconfig", []byte("not-a-kubeconfig"))
 
 	pool := &v1alpha1.VNodePool{
 		ObjectMeta: metav1.ObjectMeta{
@@ -182,6 +226,9 @@ func TestDedicatedPoolValidationE2E(t *testing.T) {
 		}
 		if current.Status.Phase != "Failed" {
 			return errors.New("expected Failed phase")
+		}
+		if !hasCondition(current.Status.Conditions, "Degraded", metav1.ConditionTrue) {
+			return errors.New("expected degraded pool condition")
 		}
 		var nodes v1alpha1.VNodeList
 		if err := k8sClient.List(ctx, &nodes, client.InNamespace(ns), client.MatchingLabels{"vnode.kroderdev.io/pool": "invalid-dedicated"}); err != nil {
@@ -246,6 +293,7 @@ func setupSuite() {
 			suiteSetupErr = err
 			return
 		}
+		suiteCfg = cfg
 
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 			Scheme: scheme,
@@ -261,7 +309,8 @@ func setupSuite() {
 		}
 
 		nodeRepo := kubeclient.NewNodeRepository(mgr.GetClient())
-		registrar := virtualkubelet.NewRegistrar()
+		resolver := kubeclient.NewSecretKubeconfigResolver(mgr.GetClient())
+		registrar := virtualkubelet.NewRegistrar(virtualkubelet.NewTenantClientManager(resolver))
 		nodeSvc := service.NewNodeService(nodeRepo, registrar)
 		poolSvc := service.NewPoolService(nodeRepo, nodeSvc)
 
@@ -281,6 +330,11 @@ func setupSuite() {
 		}()
 
 		suiteClient, err = client.New(cfg, client.Options{Scheme: scheme})
+		if err != nil {
+			suiteSetupErr = err
+			return
+		}
+		suiteClientset, err = kubernetes.NewForConfig(cfg)
 		if err != nil {
 			suiteSetupErr = err
 			return
@@ -310,13 +364,22 @@ func createNamespace(t *testing.T, ctx context.Context, c client.Client, name st
 
 func createKubeconfigSecret(t *testing.T, ctx context.Context, c client.Client, namespace, name string) {
 	t.Helper()
+	data, err := buildKubeconfigBytes(suiteCfg)
+	if err != nil {
+		t.Fatalf("build kubeconfig: %v", err)
+	}
+	createRawKubeconfigSecret(t, ctx, c, namespace, name, data)
+}
+
+func createRawKubeconfigSecret(t *testing.T, ctx context.Context, c client.Client, namespace, name string, data []byte) {
+	t.Helper()
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
 		Data: map[string][]byte{
-			"config": []byte("apiVersion: v1\nkind: Config\n"),
+			"config": data,
 		},
 	}
 	if err := c.Create(ctx, secret); err != nil {
@@ -418,4 +481,39 @@ func baseSchema() *apiextensionsv1.JSONSchemaProps {
 
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+func buildKubeconfigBytes(cfg *rest.Config) ([]byte, error) {
+	kubeconfig := clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{
+			"envtest": {
+				Server:                   cfg.Host,
+				CertificateAuthorityData: cfg.CAData,
+			},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			"envtest": {
+				ClientCertificateData: cfg.CertData,
+				ClientKeyData:         cfg.KeyData,
+				Token:                 cfg.BearerToken,
+			},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			"envtest": {
+				Cluster:  "envtest",
+				AuthInfo: "envtest",
+			},
+		},
+		CurrentContext: "envtest",
+	}
+	return clientcmd.Write(kubeconfig)
+}
+
+func hasCondition(conditions []metav1.Condition, conditionType string, status metav1.ConditionStatus) bool {
+	for _, condition := range conditions {
+		if condition.Type == conditionType && condition.Status == status {
+			return true
+		}
+	}
+	return false
 }

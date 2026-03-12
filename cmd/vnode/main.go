@@ -61,10 +61,10 @@ func main() {
 
 	// Build outbound adapters
 	nodeRepo := kubeclient.NewNodeRepository(mgr.GetClient())
-	registrar := vkregistrar.NewRegistrar()
-	kataRuntime := runtime.NewKataAdapter(cfg.DefaultRuntimeClass)
 	kubeconfigResolver := kubeclient.NewSecretKubeconfigResolver(mgr.GetClient())
-	_ = kubeconfigResolver // Will be used when wiring Virtual Kubelet per-tenant connections
+	tenantClients := vkregistrar.NewTenantClientManager(kubeconfigResolver)
+	registrar := vkregistrar.NewRegistrar(tenantClients)
+	kataRuntime := runtime.NewKataAdapter(cfg.DefaultRuntimeClass)
 
 	// Build domain services
 	nodeSvc := service.NewNodeService(nodeRepo, registrar)

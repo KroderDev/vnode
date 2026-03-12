@@ -10,8 +10,8 @@ import (
 
 // NodeService implements ports.NodeLifecycle.
 type NodeService struct {
-	nodeRepo   ports.NodeRepository
-	registrar  ports.NodeRegistrar
+	nodeRepo  ports.NodeRepository
+	registrar ports.NodeRegistrar
 }
 
 func NewNodeService(nodeRepo ports.NodeRepository, registrar ports.NodeRegistrar) *NodeService {
@@ -29,12 +29,17 @@ func (s *NodeService) Provision(ctx context.Context, pool model.VNodePool) (mode
 	}
 
 	node := model.VNode{
-		Name:      fmt.Sprintf("%s-%d", pool.Name, len(existing)+1),
-		Namespace: pool.Namespace,
-		PoolName:  pool.Name,
-		Phase:     model.NodePhasePending,
-		Capacity:  pool.PerNodeResources,
+		Name:        fmt.Sprintf("%s-%d", pool.Name, len(existing)+1),
+		Namespace:   pool.Namespace,
+		PoolName:    pool.Name,
+		TenantRef:   pool.TenantRef,
+		Taints:      pool.Taints,
+		Phase:       model.NodePhasePending,
+		Capacity:    pool.PerNodeResources,
 		Allocatable: pool.PerNodeResources,
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionReady, Status: false, Reason: "Registering", Message: "Waiting for tenant cluster node registration"},
+		},
 	}
 
 	if err := s.nodeRepo.Save(ctx, node); err != nil {
@@ -42,13 +47,24 @@ func (s *NodeService) Provision(ctx context.Context, pool model.VNodePool) (mode
 	}
 
 	if err := s.registrar.Register(ctx, node, pool.TenantRef); err != nil {
+		node.Phase = model.NodePhaseNotReady
+		node.Conditions = []model.NodeCondition{
+			{Type: model.NodeConditionKubeconfig, Status: false, Reason: "RegistrationFailed", Message: err.Error()},
+			{Type: model.NodeConditionRegistered, Status: false, Reason: "RegistrationFailed", Message: err.Error()},
+			{Type: model.NodeConditionReady, Status: false, Reason: "RegistrationFailed", Message: err.Error()},
+			{Type: model.NodeConditionDegraded, Status: true, Reason: "RegistrationFailed", Message: err.Error()},
+		}
+		_ = s.nodeRepo.Save(ctx, node)
 		return node, fmt.Errorf("registering node %s in vcluster: %w", node.Name, err)
 	}
 
 	node.Phase = model.NodePhaseReady
 	node.Conditions = []model.NodeCondition{
-		{Type: model.NodeConditionRegistered, Status: true, Reason: "Registered", Message: "Node registered in vcluster"},
+		{Type: model.NodeConditionKubeconfig, Status: true, Reason: "KubeconfigResolved", Message: "Tenant kubeconfig resolved"},
+		{Type: model.NodeConditionRegistered, Status: true, Reason: "RegistrationSucceeded", Message: "Node registered in tenant cluster"},
+		{Type: model.NodeConditionLease, Status: true, Reason: "LeaseActive", Message: "Node lease is active"},
 		{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
+		{Type: model.NodeConditionDegraded, Status: false, Reason: "Healthy", Message: "Node registration is healthy"},
 	}
 
 	if err := s.nodeRepo.Save(ctx, node); err != nil {
@@ -60,11 +76,14 @@ func (s *NodeService) Provision(ctx context.Context, pool model.VNodePool) (mode
 
 func (s *NodeService) Deprovision(ctx context.Context, node model.VNode) error {
 	node.Phase = model.NodePhaseTerminating
+	node.Conditions = []model.NodeCondition{
+		{Type: model.NodeConditionReady, Status: false, Reason: "Terminating", Message: "Node is being removed"},
+	}
 	if err := s.nodeRepo.Save(ctx, node); err != nil {
 		return fmt.Errorf("marking node %s as terminating: %w", node.Name, err)
 	}
 
-	if err := s.registrar.Deregister(ctx, node); err != nil {
+	if err := s.registrar.Deregister(ctx, node, node.TenantRef); err != nil {
 		return fmt.Errorf("deregistering node %s: %w", node.Name, err)
 	}
 
@@ -76,5 +95,16 @@ func (s *NodeService) Deprovision(ctx context.Context, node model.VNode) error {
 }
 
 func (s *NodeService) UpdateStatus(ctx context.Context, node model.VNode) error {
+	if err := s.registrar.UpdateNodeStatus(ctx, node, node.TenantRef); err != nil {
+		node.Phase = model.NodePhaseNotReady
+		node.Conditions = []model.NodeCondition{
+			{Type: model.NodeConditionReady, Status: false, Reason: "StatusSyncFailed", Message: err.Error()},
+			{Type: model.NodeConditionDegraded, Status: true, Reason: "StatusSyncFailed", Message: err.Error()},
+		}
+		if saveErr := s.nodeRepo.Save(ctx, node); saveErr != nil {
+			return fmt.Errorf("updating node %s status after sync failure: %w", node.Name, saveErr)
+		}
+		return fmt.Errorf("syncing tenant node status for %s: %w", node.Name, err)
+	}
 	return s.nodeRepo.Save(ctx, node)
 }

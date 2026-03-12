@@ -1,148 +1,152 @@
-package virtualkubelet_test
+package virtualkubelet
 
 import (
 	"context"
 	"testing"
 
-	"github.com/kroderdev/vnode/internal/adapter/outbound/virtualkubelet"
 	"github.com/kroderdev/vnode/internal/domain/model"
+
+	coordinationv1 "k8s.io/api/coordination/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 )
 
-func TestRegistrar_Register_Success(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	node := model.VNode{Name: "pool-1"}
-	tenant := model.TenantRef{VClusterNamespace: "tenant-ns"}
+type fakeResolver struct {
+	data []byte
+	err  error
+}
 
-	err := reg.Register(context.Background(), node, tenant)
+func (r *fakeResolver) Resolve(context.Context, string, string) ([]byte, error) {
+	return r.data, r.err
+}
+
+func TestTenantClientManager_CachesClientsets(t *testing.T) {
+	manager := NewTenantClientManager(&fakeResolver{data: validKubeconfigBytes()})
+	calls := 0
+	clientset := kubernetesfake.NewClientset()
+	manager.factory = func(*rest.Config) (kubernetes.Interface, error) {
+		calls++
+		return clientset, nil
+	}
+
+	tenant := model.TenantRef{VClusterNamespace: "tenant-a", KubeconfigSecret: "cfg"}
+	first, err := manager.Get(context.Background(), tenant)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("first get: %v", err)
 	}
-	if !reg.IsRegistered("pool-1") {
-		t.Error("expected node to be registered")
-	}
-}
-
-func TestRegistrar_Register_MultipleNodes(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	tenant := model.TenantRef{VClusterNamespace: "ns"}
-
-	for _, name := range []string{"node-1", "node-2", "node-3"} {
-		if err := reg.Register(context.Background(), model.VNode{Name: name}, tenant); err != nil {
-			t.Fatalf("unexpected error registering %s: %v", name, err)
-		}
-	}
-
-	if reg.RegisteredCount() != 3 {
-		t.Errorf("expected 3 registered, got %d", reg.RegisteredCount())
-	}
-	for _, name := range []string{"node-1", "node-2", "node-3"} {
-		if !reg.IsRegistered(name) {
-			t.Errorf("expected %s to be registered", name)
-		}
-	}
-}
-
-func TestRegistrar_Register_Idempotent(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	node := model.VNode{Name: "node-1"}
-	tenant := model.TenantRef{VClusterNamespace: "ns"}
-
-	_ = reg.Register(context.Background(), node, tenant)
-	_ = reg.Register(context.Background(), node, tenant)
-
-	if reg.RegisteredCount() != 1 {
-		t.Errorf("expected 1 registered after double register, got %d", reg.RegisteredCount())
-	}
-}
-
-func TestRegistrar_Deregister_Success(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	node := model.VNode{Name: "node-1"}
-	tenant := model.TenantRef{VClusterNamespace: "ns"}
-
-	_ = reg.Register(context.Background(), node, tenant)
-	err := reg.Deregister(context.Background(), node)
+	second, err := manager.Get(context.Background(), tenant)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("second get: %v", err)
 	}
-	if reg.IsRegistered("node-1") {
-		t.Error("expected node to be deregistered")
+
+	if first != second {
+		t.Fatal("expected cached clientset instance")
 	}
-	if reg.RegisteredCount() != 0 {
-		t.Errorf("expected 0 registered, got %d", reg.RegisteredCount())
+	if calls != 1 {
+		t.Fatalf("expected single client factory call, got %d", calls)
 	}
 }
 
-func TestRegistrar_Deregister_NonExistent(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	err := reg.Deregister(context.Background(), model.VNode{Name: "ghost"})
+func TestRegistrar_Register_CreatesTenantNodeAndLease(t *testing.T) {
+	clientset := kubernetesfake.NewClientset()
+	manager := NewTenantClientManager(&fakeResolver{data: validKubeconfigBytes()})
+	manager.factory = func(*rest.Config) (kubernetes.Interface, error) {
+		return clientset, nil
+	}
+	reg := NewRegistrar(manager)
+
+	node := model.VNode{
+		Name:        "pool-a-1",
+		PoolName:    "pool-a",
+		TenantRef:   model.TenantRef{VClusterName: "tenant-a", VClusterNamespace: "tenant-a", KubeconfigSecret: "cfg"},
+		Taints:      []model.Taint{{Key: "dedicated", Value: "true", Effect: string(corev1.TaintEffectNoSchedule)}},
+		Capacity:    model.ResourceList{CPU: "2", Memory: "4Gi", Pods: 110},
+		Allocatable: model.ResourceList{CPU: "2", Memory: "4Gi", Pods: 110},
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
+			{Type: model.NodeConditionLease, Status: true, Reason: "LeaseActive", Message: "Lease active"},
+		},
+	}
+
+	if err := reg.Register(context.Background(), node, node.TenantRef); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	tenantNode, err := clientset.CoreV1().Nodes().Get(context.Background(), "pool-a-1", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("expected no error for non-existent node, got: %v", err)
+		t.Fatalf("get node: %v", err)
 	}
-}
-
-func TestRegistrar_Deregister_OnlyRemovesCorrectNode(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	tenant := model.TenantRef{VClusterNamespace: "ns"}
-
-	_ = reg.Register(context.Background(), model.VNode{Name: "node-1"}, tenant)
-	_ = reg.Register(context.Background(), model.VNode{Name: "node-2"}, tenant)
-	_ = reg.Register(context.Background(), model.VNode{Name: "node-10"}, tenant)
-
-	_ = reg.Deregister(context.Background(), model.VNode{Name: "node-1"})
-
-	if reg.IsRegistered("node-1") {
-		t.Error("node-1 should be deregistered")
+	if tenantNode.Labels["vnode.kroderdev.io/pool"] != "pool-a" {
+		t.Fatalf("unexpected pool label: %#v", tenantNode.Labels)
 	}
-	if !reg.IsRegistered("node-2") {
-		t.Error("node-2 should still be registered")
+	if len(tenantNode.Spec.Taints) != 1 {
+		t.Fatalf("expected tenant taint to be applied")
 	}
-	if !reg.IsRegistered("node-10") {
-		t.Error("node-10 should still be registered (not a suffix match victim)")
+	if got := tenantNode.Status.Capacity.Cpu().String(); got != "2" {
+		t.Fatalf("unexpected cpu capacity: %s", got)
 	}
-	if reg.RegisteredCount() != 2 {
-		t.Errorf("expected 2 registered, got %d", reg.RegisteredCount())
-	}
-}
 
-func TestRegistrar_Deregister_DoesNotFalseMatchSuffix(t *testing.T) {
-	// Regression test: "node-1" should NOT match "other-node-1"
-	reg := virtualkubelet.NewRegistrar()
-	tenant := model.TenantRef{VClusterNamespace: "ns"}
-
-	_ = reg.Register(context.Background(), model.VNode{Name: "other-node-1"}, tenant)
-
-	// Deregister "node-1" should NOT remove "other-node-1"
-	// because the key is "ns/other-node-1" and we look for "/node-1" suffix
-	// Actually "ns/other-node-1" does end with "/node-1"... wait, no.
-	// The key is "ns/other-node-1", suffix is "/node-1"
-	// "ns/other-node-1" ends with "-node-1", not "/node-1" ✓
-	_ = reg.Deregister(context.Background(), model.VNode{Name: "node-1"})
-
-	// other-node-1 should NOT have been removed
-	if !reg.IsRegistered("other-node-1") {
-		t.Error("other-node-1 should not have been deregistered by node-1")
-	}
-}
-
-func TestRegistrar_UpdateNodeStatus_Noop(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	err := reg.UpdateNodeStatus(context.Background(), model.VNode{Name: "any"})
+	lease, err := clientset.CoordinationV1().Leases(leaseNamespace).Get(context.Background(), "pool-a-1", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("get lease: %v", err)
+	}
+	if lease.Name != "pool-a-1" {
+		t.Fatalf("unexpected lease name: %s", lease.Name)
 	}
 }
 
-func TestRegistrar_IsRegistered_NotFound(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	if reg.IsRegistered("nonexistent") {
-		t.Error("expected false for non-registered node")
+func TestRegistrar_Deregister_RemovesTenantArtifacts(t *testing.T) {
+	clientset := kubernetesfake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: leaseNamespace}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "pool-a-1"}},
+	)
+	manager := NewTenantClientManager(&fakeResolver{data: validKubeconfigBytes()})
+	manager.factory = func(*rest.Config) (kubernetes.Interface, error) {
+		return clientset, nil
+	}
+	reg := NewRegistrar(manager)
+
+	node := model.VNode{Name: "pool-a-1"}
+	tenant := model.TenantRef{VClusterNamespace: "tenant-a", KubeconfigSecret: "cfg"}
+	if _, err := clientset.CoordinationV1().Leases(leaseNamespace).Create(context.Background(), leaseForTest("pool-a-1"), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create lease: %v", err)
+	}
+
+	if err := reg.Deregister(context.Background(), node, tenant); err != nil {
+		t.Fatalf("deregister: %v", err)
+	}
+	if _, err := clientset.CoreV1().Nodes().Get(context.Background(), "pool-a-1", metav1.GetOptions{}); err == nil {
+		t.Fatal("expected node to be deleted")
+	}
+	if _, err := clientset.CoordinationV1().Leases(leaseNamespace).Get(context.Background(), "pool-a-1", metav1.GetOptions{}); err == nil {
+		t.Fatal("expected lease to be deleted")
 	}
 }
 
-func TestRegistrar_RegisteredCount_Empty(t *testing.T) {
-	reg := virtualkubelet.NewRegistrar()
-	if reg.RegisteredCount() != 0 {
-		t.Errorf("expected 0, got %d", reg.RegisteredCount())
+func leaseForTest(name string) *coordinationv1.Lease {
+	return &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: leaseNamespace},
 	}
+}
+
+func validKubeconfigBytes() []byte {
+	return []byte(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://example.invalid
+  name: test
+contexts:
+- context:
+    cluster: test
+    user: test
+  name: test
+current-context: test
+users:
+- name: test
+  user:
+    token: fake`)
 }

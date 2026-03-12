@@ -8,11 +8,18 @@ import (
 	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/ports"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	vnodeAnnotationVClusterName      = "vnode.kroderdev.io/vcluster-name"
+	vnodeAnnotationVClusterNamespace = "vnode.kroderdev.io/vcluster-namespace"
+	vnodeAnnotationKubeconfigSecret  = "vnode.kroderdev.io/kubeconfig-secret"
 )
 
 // VNodeReconciler reconciles VNode objects.
@@ -45,7 +52,12 @@ func (r *VNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		Name:      cr.Name,
 		Namespace: cr.Namespace,
 		PoolName:  cr.Spec.PoolRef,
-		Phase:     model.NodePhase(cr.Status.Phase),
+		TenantRef: model.TenantRef{
+			VClusterName:      cr.Annotations[vnodeAnnotationVClusterName],
+			VClusterNamespace: cr.Annotations[vnodeAnnotationVClusterNamespace],
+			KubeconfigSecret:  cr.Annotations[vnodeAnnotationKubeconfigSecret],
+		},
+		Phase: model.NodePhase(cr.Status.Phase),
 		Capacity: model.ResourceList{
 			CPU:    cr.Spec.Capacity.CPU,
 			Memory: cr.Spec.Capacity.Memory,
@@ -62,6 +74,9 @@ func (r *VNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if err := r.NodeSvc.UpdateStatus(ctx, node); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		logger.Error(err, "failed to update node status")
 		return ctrl.Result{}, fmt.Errorf("updating node %s: %w", node.Name, err)
 	}

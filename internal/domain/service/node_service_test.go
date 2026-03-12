@@ -87,7 +87,7 @@ func (r *mockRegistrar) Register(_ context.Context, node model.VNode, _ model.Te
 	return nil
 }
 
-func (r *mockRegistrar) Deregister(_ context.Context, node model.VNode) error {
+func (r *mockRegistrar) Deregister(_ context.Context, node model.VNode, _ model.TenantRef) error {
 	if r.deregisterErr != nil {
 		return r.deregisterErr
 	}
@@ -95,7 +95,11 @@ func (r *mockRegistrar) Deregister(_ context.Context, node model.VNode) error {
 	return nil
 }
 
-func (r *mockRegistrar) UpdateNodeStatus(_ context.Context, _ model.VNode) error {
+func (r *mockRegistrar) UpdateNodeStatus(_ context.Context, node model.VNode, _ model.TenantRef) error {
+	if r.registerErr != nil {
+		return r.registerErr
+	}
+	r.registered[node.Name] = true
 	return nil
 }
 
@@ -183,21 +187,33 @@ func TestNodeService_Provision_Conditions(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(node.Conditions) != 2 {
-		t.Fatalf("expected 2 conditions, got %d", len(node.Conditions))
+	if len(node.Conditions) != 5 {
+		t.Fatalf("expected 5 conditions, got %d", len(node.Conditions))
 	}
 
-	var hasRegistered, hasReady bool
+	var hasRegistered, hasReady, hasKubeconfig, hasLease bool
 	for _, c := range node.Conditions {
+		if c.Type == model.NodeConditionKubeconfig && c.Status {
+			hasKubeconfig = true
+		}
 		if c.Type == model.NodeConditionRegistered && c.Status {
 			hasRegistered = true
+		}
+		if c.Type == model.NodeConditionLease && c.Status {
+			hasLease = true
 		}
 		if c.Type == model.NodeConditionReady && c.Status {
 			hasReady = true
 		}
 	}
+	if !hasKubeconfig {
+		t.Error("missing KubeconfigResolved=true condition")
+	}
 	if !hasRegistered {
 		t.Error("missing Registered=true condition")
+	}
+	if !hasLease {
+		t.Error("missing LeaseActive=true condition")
 	}
 	if !hasReady {
 		t.Error("missing Ready=true condition")
