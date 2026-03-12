@@ -17,13 +17,17 @@ func NewPodService(runtime ports.IsolationRuntime) *PodService {
 }
 
 func (s *PodService) Translate(_ context.Context, pod model.PodSpec, pool model.VNodePool, vnodeName string) (model.PodTranslation, error) {
-	return model.TranslatePod(
-		pod,
-		vnodeName,
-		pool.Name,
-		pool.Namespace,
-		s.runtime.RuntimeClassName(),
-	), nil
+	opts := model.TranslateOpts{
+		VNodeName:       vnodeName,
+		PoolName:        pool.Name,
+		TargetNamespace: pool.Namespace,
+		RuntimeClass:    s.runtime.RuntimeClassName(),
+	}
+	// For dedicated/burstable modes, apply node selector to pin pods to labeled host nodes
+	if pool.Mode == model.PoolModeDedicated || pool.Mode == model.PoolModeBurstable {
+		opts.NodeSelector = pool.NodeSelector
+	}
+	return model.TranslatePod(pod, opts), nil
 }
 
 func (s *PodService) SyncStatus(_ context.Context, hostStatus model.PodStatus) (model.PodStatus, error) {

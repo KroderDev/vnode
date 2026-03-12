@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 // PoolMode defines how a VNodePool allocates host resources.
 type PoolMode string
 
@@ -37,9 +39,34 @@ type VNodePool struct {
 	IsolationBackend string
 	NodeCount        int32
 	PerNodeResources ResourceList
+	NodeSelector     map[string]string // For dedicated mode: host node labels
 	Phase            PoolPhase
 	ReadyNodes       int32
 	Nodes            []string // VNode names
+	DeletionPending  bool     // True when the pool is being deleted
+}
+
+// Validate checks the pool spec for consistency.
+func (p *VNodePool) Validate() error {
+	if p.Name == "" {
+		return fmt.Errorf("pool name is required")
+	}
+	if p.TenantRef.KubeconfigSecret == "" {
+		return fmt.Errorf("tenantRef.kubeconfigSecret is required")
+	}
+	if p.NodeCount < 0 {
+		return fmt.Errorf("nodeCount must be >= 0")
+	}
+	if p.Mode == PoolModeDedicated && len(p.NodeSelector) == 0 {
+		return fmt.Errorf("dedicated mode requires nodeSelector")
+	}
+	switch p.Mode {
+	case PoolModeShared, PoolModeDedicated, PoolModeBurstable, "":
+		// valid
+	default:
+		return fmt.Errorf("invalid pool mode: %s", p.Mode)
+	}
+	return nil
 }
 
 // DesiredScaleActions computes the number of nodes to add or remove.

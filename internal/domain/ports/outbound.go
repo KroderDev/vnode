@@ -29,6 +29,11 @@ type IsolationRuntime interface {
 	Validate(ctx context.Context) error
 }
 
+// KubeconfigResolver resolves a tenant's kubeconfig from a Secret reference.
+type KubeconfigResolver interface {
+	Resolve(ctx context.Context, secretNamespace, secretName string) ([]byte, error)
+}
+
 // PoolRepository persists and retrieves VNodePool state.
 type PoolRepository interface {
 	Get(ctx context.Context, namespace, name string) (*model.VNodePool, error)

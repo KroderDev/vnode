@@ -6,6 +6,13 @@ import (
 	"github.com/kroderdev/vnode/internal/domain/model"
 )
 
+func opts(vnodeName, poolName, ns, rc string) model.TranslateOpts {
+	return model.TranslateOpts{
+		VNodeName: vnodeName, PoolName: poolName,
+		TargetNamespace: ns, RuntimeClass: rc,
+	}
+}
+
 func TestTranslatePod_BasicTranslation(t *testing.T) {
 	source := model.PodSpec{
 		Name:               "my-app",
@@ -30,7 +37,7 @@ func TestTranslatePod_BasicTranslation(t *testing.T) {
 		},
 	}
 
-	result := model.TranslatePod(source, "vnode-1", "pool-medium", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vnode-1", "pool-medium", "host-ns", "kata"))
 	target := result.TargetPod
 
 	if target.Name != "vnode-1-tenant-ns-my-app" {
@@ -101,7 +108,7 @@ func TestTranslatePod_PreservesContainerResources(t *testing.T) {
 		},
 	}
 
-	result := model.TranslatePod(source, "vn-1", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn-1", "pool", "host-ns", "kata"))
 	res := result.TargetPod.Containers[0].Resources
 	if res.Requests.CPU != "100m" {
 		t.Errorf("expected CPU request 100m, got %s", res.Requests.CPU)
@@ -116,7 +123,7 @@ func TestTranslatePod_EmptyContainers(t *testing.T) {
 		Name:      "empty",
 		Namespace: "ns",
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if len(result.TargetPod.Containers) != 0 {
 		t.Errorf("expected 0 containers, got %d", len(result.TargetPod.Containers))
 	}
@@ -132,7 +139,7 @@ func TestTranslatePod_MultipleContainers(t *testing.T) {
 			{Name: "init", Image: "init:v1"},
 		},
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if len(result.TargetPod.Containers) != 3 {
 		t.Errorf("expected 3 containers, got %d", len(result.TargetPod.Containers))
 	}
@@ -155,7 +162,7 @@ func TestTranslatePod_MultipleVolumes_MixedTypes(t *testing.T) {
 			{Name: "empty", Type: model.VolumeTypeEmptyDir},
 		},
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	// Only non-projected volumes should remain
 	if len(result.TargetPod.Volumes) != 3 {
 		t.Errorf("expected 3 non-projected volumes, got %d", len(result.TargetPod.Volumes))
@@ -172,7 +179,7 @@ func TestTranslatePod_NoSourceLabels(t *testing.T) {
 		Name:      "no-labels",
 		Namespace: "ns",
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	// Should still have vnode system labels (managed-by, pool, node-name, source-pod-name, source-pod-ns)
 	if len(result.TargetPod.Labels) != 5 {
 		t.Errorf("expected 5 vnode labels, got %d", len(result.TargetPod.Labels))
@@ -192,7 +199,7 @@ func TestTranslatePod_VNodeLabelsNotOverriddenBySource(t *testing.T) {
 			"custom":             "value",
 		},
 	}
-	result := model.TranslatePod(source, "real-node", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("real-node", "pool", "host-ns", "kata"))
 	// System labels must NOT be overridden by source
 	if result.TargetPod.Labels[model.LabelManagedBy] != model.LabelManagedByValue {
 		t.Errorf("managed-by label should not be overridden, got %s", result.TargetPod.Labels[model.LabelManagedBy])
@@ -220,7 +227,7 @@ func TestTranslatePod_ContainerWithOnlySAMount(t *testing.T) {
 			},
 		},
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if len(result.TargetPod.Containers[0].VolumeMounts) != 0 {
 		t.Errorf("expected 0 volume mounts after stripping SA, got %d", len(result.TargetPod.Containers[0].VolumeMounts))
 	}
@@ -234,7 +241,7 @@ func TestTranslatePod_ContainerWithNoMounts(t *testing.T) {
 			{Name: "main", Image: "app:v1"},
 		},
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if len(result.TargetPod.Containers[0].VolumeMounts) != 0 {
 		t.Errorf("expected 0 volume mounts, got %d", len(result.TargetPod.Containers[0].VolumeMounts))
 	}
@@ -257,7 +264,7 @@ func TestTranslatePod_PreservesEnvAndArgs(t *testing.T) {
 			},
 		},
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	c := result.TargetPod.Containers[0]
 
 	if len(c.Command) != 2 || c.Command[0] != "/bin/sh" {
@@ -280,7 +287,7 @@ func TestTranslatePod_SourcePodPreservedInResult(t *testing.T) {
 		Namespace: "ns",
 		Labels:    map[string]string{"app": "test"},
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if result.SourcePod.Name != "src" {
 		t.Errorf("source pod not preserved in translation result")
 	}
@@ -294,7 +301,7 @@ func TestTranslatePod_EmptyVolumes(t *testing.T) {
 		Name:      "no-vols",
 		Namespace: "ns",
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if len(result.TargetPod.Volumes) != 0 {
 		t.Errorf("expected 0 volumes, got %d", len(result.TargetPod.Volumes))
 	}
@@ -315,7 +322,7 @@ func TestTranslatePod_AllVolumeTypesPreservedExceptProjected(t *testing.T) {
 	}
 
 	source := model.PodSpec{Name: "all-types", Namespace: "ns", Volumes: vols}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if len(result.TargetPod.Volumes) != len(types) {
 		t.Errorf("expected %d volumes (all non-projected types), got %d", len(types), len(result.TargetPod.Volumes))
 	}
@@ -350,7 +357,7 @@ func TestTranslatePod_MultipleContainersWithMixedMounts(t *testing.T) {
 			},
 		},
 	}
-	result := model.TranslatePod(source, "vn", "pool", "host-ns", "kata")
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 
 	// c1: 1 mount (data), SA stripped
 	if len(result.TargetPod.Containers[0].VolumeMounts) != 1 {
@@ -363,5 +370,31 @@ func TestTranslatePod_MultipleContainersWithMixedMounts(t *testing.T) {
 	// c3: 0 mounts, only SA stripped
 	if len(result.TargetPod.Containers[2].VolumeMounts) != 0 {
 		t.Errorf("c3: expected 0 mounts, got %d", len(result.TargetPod.Containers[2].VolumeMounts))
+	}
+}
+
+func TestTranslatePod_WithNodeSelector(t *testing.T) {
+	source := model.PodSpec{Name: "app", Namespace: "ns"}
+	o := model.TranslateOpts{
+		VNodeName:       "vn",
+		PoolName:        "pool",
+		TargetNamespace: "host-ns",
+		RuntimeClass:    "kata",
+		NodeSelector:    map[string]string{"tenant": "a", "tier": "dedicated"},
+	}
+	result := model.TranslatePod(source, o)
+	if len(result.TargetPod.NodeSelector) != 2 {
+		t.Errorf("expected 2 node selectors, got %d", len(result.TargetPod.NodeSelector))
+	}
+	if result.TargetPod.NodeSelector["tenant"] != "a" {
+		t.Errorf("expected tenant=a, got %s", result.TargetPod.NodeSelector["tenant"])
+	}
+}
+
+func TestTranslatePod_WithoutNodeSelector(t *testing.T) {
+	source := model.PodSpec{Name: "app", Namespace: "ns"}
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
+	if result.TargetPod.NodeSelector != nil {
+		t.Errorf("expected nil node selector for shared mode, got %v", result.TargetPod.NodeSelector)
 	}
 }

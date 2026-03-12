@@ -11,8 +11,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+const poolFinalizer = "vnode.kroderdev.io/pool-cleanup"
 
 // VNodePoolReconciler reconciles VNodePool objects.
 type VNodePoolReconciler struct {
@@ -37,27 +40,29 @@ func (r *VNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Handle deletion
+	if !cr.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, &cr)
+	}
+
+	// Ensure finalizer
+	if !controllerutil.ContainsFinalizer(&cr, poolFinalizer) {
+		controllerutil.AddFinalizer(&cr, poolFinalizer)
+		if err := r.Update(ctx, &cr); err != nil {
+			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
+		}
+	}
+
 	logger.Info("reconciling VNodePool", "name", cr.Name, "nodeCount", cr.Spec.NodeCount)
 
-	pool := model.VNodePool{
-		ID:        string(cr.UID),
-		Name:      cr.Name,
-		Namespace: cr.Namespace,
-		TenantRef: model.TenantRef{
-			VClusterName:      cr.Spec.TenantRef.VClusterName,
-			VClusterNamespace: cr.Spec.TenantRef.VClusterNamespace,
-			KubeconfigSecret:  cr.Spec.TenantRef.KubeconfigSecret,
-		},
-		Mode:             model.PoolMode(cr.Spec.Mode),
-		IsolationBackend: cr.Spec.IsolationBackend,
-		NodeCount:        cr.Spec.NodeCount,
-		PerNodeResources: model.ResourceList{
-			CPU:    cr.Spec.PerNodeResources.CPU,
-			Memory: cr.Spec.PerNodeResources.Memory,
-			Pods:   cr.Spec.PerNodeResources.Pods,
-		},
-		Phase:      model.PoolPhase(cr.Status.Phase),
-		ReadyNodes: cr.Status.ReadyNodes,
+	pool := crToPoolModel(&cr)
+
+	// Validate pool spec
+	if err := pool.Validate(); err != nil {
+		logger.Error(err, "invalid pool spec")
+		cr.Status.Phase = string(model.PoolPhaseFailed)
+		_ = r.Status().Update(ctx, &cr)
+		return ctrl.Result{}, nil // Don't requeue invalid specs
 	}
 
 	result, err := r.PoolMgr.Reconcile(ctx, pool)
@@ -77,6 +82,64 @@ func (r *VNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *VNodePoolReconciler) handleDeletion(ctx context.Context, cr *v1alpha1.VNodePool) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if !controllerutil.ContainsFinalizer(cr, poolFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	logger.Info("handling VNodePool deletion", "name", cr.Name)
+
+	// Set phase to Deleting
+	cr.Status.Phase = string(model.PoolPhaseDeleting)
+	_ = r.Status().Update(ctx, cr)
+
+	// Reconcile with 0 nodes to deprovision all
+	pool := crToPoolModel(cr)
+	pool.NodeCount = 0
+	pool.DeletionPending = true
+
+	if _, err := r.PoolMgr.Reconcile(ctx, pool); err != nil {
+		logger.Error(err, "error during pool cleanup")
+		return ctrl.Result{}, fmt.Errorf("cleaning up pool %s: %w", cr.Name, err)
+	}
+
+	// Remove finalizer
+	controllerutil.RemoveFinalizer(cr, poolFinalizer)
+	if err := r.Update(ctx, cr); err != nil {
+		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
+	}
+
+	logger.Info("VNodePool cleanup complete", "name", cr.Name)
+	return ctrl.Result{}, nil
+}
+
+func crToPoolModel(cr *v1alpha1.VNodePool) model.VNodePool {
+	return model.VNodePool{
+		ID:        string(cr.UID),
+		Name:      cr.Name,
+		Namespace: cr.Namespace,
+		TenantRef: model.TenantRef{
+			VClusterName:      cr.Spec.TenantRef.VClusterName,
+			VClusterNamespace: cr.Spec.TenantRef.VClusterNamespace,
+			KubeconfigSecret:  cr.Spec.TenantRef.KubeconfigSecret,
+		},
+		Mode:             model.PoolMode(cr.Spec.Mode),
+		IsolationBackend: cr.Spec.IsolationBackend,
+		NodeCount:        cr.Spec.NodeCount,
+		PerNodeResources: model.ResourceList{
+			CPU:    cr.Spec.PerNodeResources.CPU,
+			Memory: cr.Spec.PerNodeResources.Memory,
+			Pods:   cr.Spec.PerNodeResources.Pods,
+		},
+		NodeSelector:    cr.Spec.NodeSelector,
+		Phase:           model.PoolPhase(cr.Status.Phase),
+		ReadyNodes:      cr.Status.ReadyNodes,
+		DeletionPending: !cr.DeletionTimestamp.IsZero(),
+	}
 }
 
 func (r *VNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {

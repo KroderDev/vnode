@@ -79,8 +79,10 @@ func crToPool(cr *v1alpha1.VNodePool) model.VNodePool {
 			Memory: cr.Spec.PerNodeResources.Memory,
 			Pods:   cr.Spec.PerNodeResources.Pods,
 		},
-		Phase:      model.PoolPhase(cr.Status.Phase),
-		ReadyNodes: cr.Status.ReadyNodes,
+		NodeSelector:    cr.Spec.NodeSelector,
+		Phase:           model.PoolPhase(cr.Status.Phase),
+		ReadyNodes:      cr.Status.ReadyNodes,
+		DeletionPending: !cr.DeletionTimestamp.IsZero(),
 	}
 }
 

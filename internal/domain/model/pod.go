@@ -14,6 +14,7 @@ type PodSpec struct {
 	// Fields to strip/override during translation
 	ServiceAccountName string
 	RuntimeClassName   string
+	NodeSelector       map[string]string
 }
 
 // Container is a minimal container spec.
@@ -98,17 +99,27 @@ const (
 	LabelSourcePodNS      = "vnode.kroderdev.io/source-pod-namespace"
 )
 
+// TranslateOpts holds options for pod translation.
+type TranslateOpts struct {
+	VNodeName       string
+	PoolName        string
+	TargetNamespace string
+	RuntimeClass    string
+	NodeSelector    map[string]string // Applied for dedicated/burstable pool modes
+}
+
 // TranslatePod converts a vcluster pod spec into a host cluster pod spec.
 // It strips vcluster-injected fields and applies the isolation RuntimeClass.
-func TranslatePod(source PodSpec, vnodeName, poolName, targetNamespace, runtimeClass string) PodTranslation {
+func TranslatePod(source PodSpec, opts TranslateOpts) PodTranslation {
 	target := PodSpec{
-		Name:             fmt.Sprintf("%s-%s-%s", vnodeName, source.Namespace, source.Name),
-		Namespace:        targetNamespace,
-		RuntimeClassName: runtimeClass,
+		Name:             fmt.Sprintf("%s-%s-%s", opts.VNodeName, source.Namespace, source.Name),
+		Namespace:        opts.TargetNamespace,
+		RuntimeClassName: opts.RuntimeClass,
+		NodeSelector:     opts.NodeSelector,
 		Labels: map[string]string{
 			LabelManagedBy:     LabelManagedByValue,
-			LabelVNodePool:     poolName,
-			LabelVNodeName:     vnodeName,
+			LabelVNodePool:     opts.PoolName,
+			LabelVNodeName:     opts.VNodeName,
 			LabelSourcePodName: source.Name,
 			LabelSourcePodNS:   source.Namespace,
 		},

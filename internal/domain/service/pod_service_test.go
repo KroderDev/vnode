@@ -83,6 +83,69 @@ func TestPodService_Translate_PoolNameAsLabel(t *testing.T) {
 	}
 }
 
+func TestPodService_Translate_DedicatedMode_AppliesNodeSelector(t *testing.T) {
+	rt := &fakeRuntime{className: "kata"}
+	svc := service.NewPodService(rt)
+
+	pod := model.PodSpec{Name: "app", Namespace: "ns"}
+	pool := model.VNodePool{
+		Name:         "dedicated-pool",
+		Namespace:    "host-ns",
+		Mode:         model.PoolModeDedicated,
+		NodeSelector: map[string]string{"tenant": "a"},
+	}
+
+	result, err := svc.Translate(context.Background(), pod, pool, "vn-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TargetPod.NodeSelector["tenant"] != "a" {
+		t.Errorf("expected nodeSelector tenant=a, got %v", result.TargetPod.NodeSelector)
+	}
+}
+
+func TestPodService_Translate_SharedMode_NoNodeSelector(t *testing.T) {
+	rt := &fakeRuntime{className: "kata"}
+	svc := service.NewPodService(rt)
+
+	pod := model.PodSpec{Name: "app", Namespace: "ns"}
+	pool := model.VNodePool{
+		Name:         "shared-pool",
+		Namespace:    "host-ns",
+		Mode:         model.PoolModeShared,
+		NodeSelector: map[string]string{"should": "be-ignored"},
+	}
+
+	result, err := svc.Translate(context.Background(), pod, pool, "vn-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TargetPod.NodeSelector != nil {
+		t.Errorf("expected nil nodeSelector for shared mode, got %v", result.TargetPod.NodeSelector)
+	}
+}
+
+func TestPodService_Translate_BurstableMode_AppliesNodeSelector(t *testing.T) {
+	rt := &fakeRuntime{className: "kata"}
+	svc := service.NewPodService(rt)
+
+	pod := model.PodSpec{Name: "app", Namespace: "ns"}
+	pool := model.VNodePool{
+		Name:         "burst-pool",
+		Namespace:    "host-ns",
+		Mode:         model.PoolModeBurstable,
+		NodeSelector: map[string]string{"tier": "burst"},
+	}
+
+	result, err := svc.Translate(context.Background(), pod, pool, "vn-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.TargetPod.NodeSelector["tier"] != "burst" {
+		t.Errorf("expected nodeSelector tier=burst for burstable mode, got %v", result.TargetPod.NodeSelector)
+	}
+}
+
 func TestPodService_SyncStatus_Passthrough(t *testing.T) {
 	rt := &fakeRuntime{className: "kata"}
 	svc := service.NewPodService(rt)

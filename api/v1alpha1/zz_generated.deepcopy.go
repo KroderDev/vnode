@@ -73,6 +73,13 @@ func (in *VNodePoolSpec) DeepCopyInto(out *VNodePoolSpec) {
 	*out = *in
 	out.TenantRef = in.TenantRef
 	out.PerNodeResources = in.PerNodeResources
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 }
 
 // DeepCopy returns a deep copy of VNodePoolSpec.

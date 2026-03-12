@@ -24,6 +24,11 @@ type VNodePoolSpec struct {
 	// IsolationBackend specifies the RuntimeClass to use for pod isolation.
 	// +kubebuilder:default=kata
 	IsolationBackend string `json:"isolationBackend,omitempty"`
+
+	// NodeSelector specifies host node labels for dedicated/burstable mode.
+	// Required when mode is "dedicated".
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // TenantRef identifies the target vcluster.
