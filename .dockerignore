@@ -1,0 +1,7 @@
+.github/
+.release-please-manifest.json
+release-please-config.json
+Makefile
+.gitignore
+.gitattributes
+README.md
