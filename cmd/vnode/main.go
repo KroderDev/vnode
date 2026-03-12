@@ -61,6 +61,7 @@ func main() {
 
 	// Build outbound adapters
 	nodeRepo := kubeclient.NewNodeRepository(mgr.GetClient())
+	hostPods := kubeclient.NewPodClusterClient(mgr.GetClient())
 	kubeconfigResolver := kubeclient.NewSecretKubeconfigResolver(mgr.GetClient())
 	tenantClients := vkregistrar.NewTenantClientManager(kubeconfigResolver)
 	registrar := vkregistrar.NewRegistrar(tenantClients)
@@ -69,11 +70,13 @@ func main() {
 	// Build domain services
 	nodeSvc := service.NewNodeService(nodeRepo, registrar)
 	poolSvc := service.NewPoolService(nodeRepo, nodeSvc)
-	_ = service.NewPodService(kataRuntime)
+	podSvc := service.NewPodService(kataRuntime)
+	podExecSvc := service.NewPodExecutionService(nodeRepo, hostPods, podSvc, tenantClients)
 
 	// Build inbound adapters (reconcilers)
 	poolReconciler := reconciler.NewVNodePoolReconciler(mgr.GetClient(), mgr.GetScheme(), poolSvc)
 	vnodeReconciler := reconciler.NewVNodeReconciler(mgr.GetClient(), mgr.GetScheme(), nodeSvc)
+	podSyncReconciler := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc)
 
 	if err := poolReconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create controller", "controller", "VNodePool")
@@ -81,6 +84,10 @@ func main() {
 	}
 	if err := vnodeReconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create controller", "controller", "VNode")
+		os.Exit(1)
+	}
+	if err := podSyncReconciler.SetupWithManager(mgr); err != nil {
+		logger.Error(err, "unable to create controller", "controller", "PodSync")
 		os.Exit(1)
 	}
 

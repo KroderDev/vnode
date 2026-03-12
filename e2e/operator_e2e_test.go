@@ -30,6 +30,7 @@ import (
 	"github.com/kroderdev/vnode/internal/adapter/inbound/reconciler"
 	"github.com/kroderdev/vnode/internal/adapter/outbound/kubeclient"
 	"github.com/kroderdev/vnode/internal/adapter/outbound/virtualkubelet"
+	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/service"
 )
 
@@ -116,6 +117,65 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		return nil
 	})
 
+	sourcePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-a",
+			Namespace: ns,
+			Labels: map[string]string{
+				"app": "workload-a",
+			},
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "pool-a-1",
+			Containers: []corev1.Container{
+				{Name: "main", Image: "nginx:stable"},
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, sourcePod); err != nil {
+		t.Fatalf("create source pod: %v", err)
+	}
+
+	hostPodName := "pool-a-1-" + ns + "-workload-a"
+	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
+		hostPod := &corev1.Pod{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: hostPodName, Namespace: ns}, hostPod); err != nil {
+			return err
+		}
+		if hostPod.Labels[model.LabelSourcePodName] != "workload-a" {
+			return errors.New("expected translated host pod labels")
+		}
+		return nil
+	})
+
+	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
+		hostPod := &corev1.Pod{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: hostPodName, Namespace: ns}, hostPod); err != nil {
+			return err
+		}
+		hostPod.Status.Phase = corev1.PodRunning
+		hostPod.Status.PodIP = "10.42.0.10"
+		hostPod.Status.ContainerStatuses = []corev1.ContainerStatus{
+			{
+				Name:  "main",
+				Ready: true,
+				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+			},
+		}
+		return k8sClient.Status().Update(ctx, hostPod)
+	})
+
+	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
+		tenantPod, err := suiteClientset.CoreV1().Pods(ns).Get(ctx, "workload-a", metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if tenantPod.Status.Phase != corev1.PodRunning || tenantPod.Status.PodIP != "10.42.0.10" {
+			return errors.New("tenant pod status not synced from host pod")
+		}
+		return nil
+	})
+
 	current := &v1alpha1.VNodePool{}
 	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pool), current); err != nil {
 		t.Fatalf("get pool for update: %v", err)
@@ -150,7 +210,23 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		} else if err == nil {
 			return errors.New("pool-a-2 lease still exists after scale down")
 		}
+		hostPod := &corev1.Pod{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: hostPodName, Namespace: ns}, hostPod); err != nil {
+			return err
+		}
 		return nil
+	})
+
+	if err := k8sClient.Delete(ctx, sourcePod); err != nil {
+		t.Fatalf("delete source pod: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: hostPodName, Namespace: ns}, &corev1.Pod{})
+		if err == nil {
+			return errors.New("host pod still exists after source pod deletion")
+		}
+		return client.IgnoreNotFound(err)
 	})
 
 	if err := k8sClient.Delete(ctx, current); err != nil {
@@ -309,16 +385,24 @@ func setupSuite() {
 		}
 
 		nodeRepo := kubeclient.NewNodeRepository(mgr.GetClient())
+		hostPods := kubeclient.NewPodClusterClient(mgr.GetClient())
 		resolver := kubeclient.NewSecretKubeconfigResolver(mgr.GetClient())
-		registrar := virtualkubelet.NewRegistrar(virtualkubelet.NewTenantClientManager(resolver))
+		tenantClients := virtualkubelet.NewTenantClientManager(resolver)
+		registrar := virtualkubelet.NewRegistrar(tenantClients)
 		nodeSvc := service.NewNodeService(nodeRepo, registrar)
 		poolSvc := service.NewPoolService(nodeRepo, nodeSvc)
+		podSvc := service.NewPodService(nilRuntime{})
+		podExecSvc := service.NewPodExecutionService(nodeRepo, hostPods, podSvc, tenantClients)
 
 		if err := reconciler.NewVNodePoolReconciler(mgr.GetClient(), mgr.GetScheme(), poolSvc).SetupWithManager(mgr); err != nil {
 			suiteSetupErr = err
 			return
 		}
 		if err := reconciler.NewVNodeReconciler(mgr.GetClient(), mgr.GetScheme(), nodeSvc).SetupWithManager(mgr); err != nil {
+			suiteSetupErr = err
+			return
+		}
+		if err := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc).SetupWithManager(mgr); err != nil {
 			suiteSetupErr = err
 			return
 		}
@@ -482,6 +566,11 @@ func baseSchema() *apiextensionsv1.JSONSchemaProps {
 func boolPtr(v bool) *bool {
 	return &v
 }
+
+type nilRuntime struct{}
+
+func (nilRuntime) RuntimeClassName() string       { return "kata" }
+func (nilRuntime) Validate(context.Context) error { return nil }
 
 func buildKubeconfigBytes(cfg *rest.Config) ([]byte, error) {
 	kubeconfig := clientcmdapi.Config{
