@@ -214,7 +214,6 @@ func crToPoolModel(cr *v1alpha1.VNodePool) model.VNodePool {
 func (r *VNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VNodePool{}).
-		Owns(&v1alpha1.VNode{}).
 		Complete(r)
 }
 
