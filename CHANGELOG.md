@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/KroderDev/vnode/compare/v1.2.0...v1.2.1) (2026-03-13)
+
+
+### Bug Fixes
+
+* retry vnode registration after transient failures ([6da244f](https://github.com/KroderDev/vnode/commit/6da244fa27f1123f5cfca6ed18bd2c89551ebf16))
+
 ## [1.2.0](https://github.com/KroderDev/vnode/compare/v1.1.0...v1.2.0) (2026-03-13)
 
 
