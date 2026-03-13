@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/KroderDev/vnode/compare/v1.2.1...v1.2.2) (2026-03-13)
+
+
+### Bug Fixes
+
+* stop vnodepool status hot loop ([2f5fade](https://github.com/KroderDev/vnode/commit/2f5fade285ab2c3162c15291be336effe00c05e2))
+
 ## [1.2.1](https://github.com/KroderDev/vnode/compare/v1.2.0...v1.2.1) (2026-03-13)
 
 
