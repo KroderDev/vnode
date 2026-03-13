@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4](https://github.com/KroderDev/vnode/compare/v1.2.3...v1.2.4) (2026-03-13)
+
+
+### Bug Fixes
+
+* decouple vnodepool from vnode status churn ([b5fa342](https://github.com/KroderDev/vnode/commit/b5fa342c3ec63fc6fbfe2674e1a944e6beb2deff))
+
 ## [1.2.3](https://github.com/KroderDev/vnode/compare/v1.2.2...v1.2.3) (2026-03-13)
 
 
