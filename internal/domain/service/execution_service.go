@@ -162,6 +162,9 @@ func listTenantPodsForNodes(ctx context.Context, clientset kubernetes.Interface,
 		if pod.Labels[model.LabelManagedBy] == model.LabelManagedByValue {
 			continue
 		}
+		if !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
 		if _, ok := ready[pod.Spec.NodeName]; !ok {
 			continue
 		}

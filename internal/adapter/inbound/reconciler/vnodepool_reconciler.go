@@ -155,6 +155,17 @@ func (r *VNodePoolReconciler) handleDeletion(ctx context.Context, cr *v1alpha1.V
 		return ctrl.Result{}, fmt.Errorf("cleaning up pool %s: %w", cr.Name, err)
 	}
 
+	var remaining v1alpha1.VNodeList
+	if err := r.List(ctx, &remaining,
+		client.InNamespace(cr.Namespace),
+		client.MatchingLabels{"vnode.kroderdev.io/pool": cr.Name},
+	); err != nil {
+		return ctrl.Result{}, fmt.Errorf("listing remaining VNodes for pool %s: %w", cr.Name, err)
+	}
+	if len(remaining.Items) > 0 {
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
 	// Remove finalizer on the latest resource version to avoid status-update races.
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var current v1alpha1.VNodePool

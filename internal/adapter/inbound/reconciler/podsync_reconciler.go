@@ -37,6 +37,9 @@ func (r *PodSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	pool := crToPoolModel(&cr)
+	if err := pool.Validate(); err != nil {
+		return ctrl.Result{}, nil
+	}
 
 	if !cr.DeletionTimestamp.IsZero() {
 		deleted, err := service.CleanupPoolPods(ctx, r.Executor.HostClient(), pool)
@@ -62,7 +65,7 @@ func (r *PodSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		observability.ExecutionFailures.WithLabelValues(pool.Name).Inc()
 		r.recordWarning(&cr, "PodExecutionFailed", err)
 		_ = r.updateExecutionConditions(ctx, cr.Namespace, cr.Name, metav1.ConditionFalse, metav1.ConditionTrue, "PodExecutionFailed", err.Error())
-		return ctrl.Result{RequeueAfter: 2 * time.Second}, err
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
 	observability.HostPodCreates.WithLabelValues(pool.Name).Add(float64(result.CreatedHostPods))
 	observability.HostPodDeletes.WithLabelValues(pool.Name).Add(float64(result.DeletedHostPods))
@@ -77,6 +80,7 @@ func (r *PodSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 func (r *PodSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		Named("vnodepool-podsync").
 		For(&v1alpha1.VNodePool{}).
 		Complete(r)
 }

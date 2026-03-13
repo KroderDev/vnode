@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -423,6 +424,13 @@ func setupSuite() {
 		}
 		suiteClientset, err = kubernetes.NewForConfig(cfg)
 		if err != nil {
+			suiteSetupErr = err
+			return
+		}
+		if _, err := suiteClientset.NodeV1().RuntimeClasses().Create(context.Background(), &nodev1.RuntimeClass{
+			ObjectMeta: metav1.ObjectMeta{Name: "kata"},
+			Handler:    "kata",
+		}, metav1.CreateOptions{}); err != nil {
 			suiteSetupErr = err
 			return
 		}
