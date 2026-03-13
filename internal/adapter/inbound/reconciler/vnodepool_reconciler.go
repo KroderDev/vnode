@@ -15,9 +15,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 func mapTaints(in []corev1.Taint) []model.Taint {
@@ -120,10 +122,7 @@ func (r *VNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("updating pool status: %w", err)
 	}
 
-	if result.Phase != model.PoolPhaseReady && !cr.DeletionTimestamp.IsZero() {
-		return ctrl.Result{RequeueAfter: time.Second}, nil
-	}
-	if result.Phase != model.PoolPhaseReady {
+	if !cr.DeletionTimestamp.IsZero() && result.Phase != model.PoolPhaseReady {
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
@@ -213,8 +212,12 @@ func crToPoolModel(cr *v1alpha1.VNodePool) model.VNodePool {
 
 func (r *VNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.VNodePool{}).
+		For(&v1alpha1.VNodePool{}, builder.WithPredicates(vnodePoolPredicates())).
 		Complete(r)
+}
+
+func vnodePoolPredicates() predicate.Predicate {
+	return predicate.GenerationChangedPredicate{}
 }
 
 func (r *VNodePoolReconciler) updatePoolStatus(ctx context.Context, namespace, name string, mutate func(*v1alpha1.VNodePoolStatus)) error {
