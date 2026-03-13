@@ -320,6 +320,84 @@ func TestDedicatedPoolValidationE2E(t *testing.T) {
 	})
 }
 
+func TestVNodePoolRecoversAfterKubeconfigSecretFixE2E(t *testing.T) {
+	k8sClient := startOperatorEnv(t)
+
+	ctx := context.Background()
+	ns := createNamespace(t, ctx, k8sClient, "tenant-retry")
+	createRawKubeconfigSecret(t, ctx, k8sClient, ns, "tenant-retry-kubeconfig", []byte("not-a-kubeconfig"))
+
+	pool := &v1alpha1.VNodePool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pool-retry",
+			Namespace: ns,
+		},
+		Spec: v1alpha1.VNodePoolSpec{
+			TenantRef: v1alpha1.TenantRef{
+				VClusterName:      "tenant-retry",
+				VClusterNamespace: ns,
+				KubeconfigSecret:  "tenant-retry-kubeconfig",
+			},
+			NodeCount: 1,
+			PerNodeResources: v1alpha1.NodeResources{
+				CPU:    "1000m",
+				Memory: "2Gi",
+				Pods:   110,
+			},
+			Mode:             "shared",
+			IsolationBackend: "kata",
+		},
+	}
+	if err := k8sClient.Create(ctx, pool); err != nil {
+		t.Fatalf("create retry pool: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
+		var nodes v1alpha1.VNodeList
+		if err := k8sClient.List(ctx, &nodes, client.InNamespace(ns), client.MatchingLabels{"vnode.kroderdev.io/pool": "pool-retry"}); err != nil {
+			return err
+		}
+		if len(nodes.Items) != 1 {
+			return fmt.Errorf("expected 1 vnode, got %d", len(nodes.Items))
+		}
+		if nodes.Items[0].Status.Phase != "NotReady" {
+			return fmt.Errorf("expected vnode to be NotReady after bad kubeconfig, got %s", nodes.Items[0].Status.Phase)
+		}
+		if !hasCondition(nodes.Items[0].Status.Conditions, "Registered", metav1.ConditionFalse) {
+			return errors.New("expected registered=false condition after bad kubeconfig")
+		}
+		return nil
+	})
+
+	data, err := buildKubeconfigBytes(suiteCfg)
+	if err != nil {
+		t.Fatalf("build kubeconfig: %v", err)
+	}
+	updateKubeconfigSecret(t, ctx, k8sClient, ns, "tenant-retry-kubeconfig", data)
+
+	waitFor(t, 15*time.Second, 250*time.Millisecond, func() error {
+		current := &v1alpha1.VNodePool{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pool), current); err != nil {
+			return err
+		}
+		if current.Status.Phase != "Ready" || current.Status.ReadyNodes != 1 || current.Status.TotalNodes != 1 {
+			return fmt.Errorf("expected recovered pool to be Ready, got phase=%s ready=%d total=%d", current.Status.Phase, current.Status.ReadyNodes, current.Status.TotalNodes)
+		}
+		return nil
+	})
+
+	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
+		node, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-retry-1", metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if node.Labels["vnode.kroderdev.io/pool"] != "pool-retry" {
+			return errors.New("expected recovered tenant node labels")
+		}
+		return nil
+	})
+}
+
 func TestMain(m *testing.M) {
 	code := func() int {
 		if _, ok := os.LookupEnv("KUBEBUILDER_ASSETS"); !ok {
@@ -478,6 +556,18 @@ func createRawKubeconfigSecret(t *testing.T, ctx context.Context, c client.Clien
 	}
 	if err := c.Create(ctx, secret); err != nil {
 		t.Fatalf("create kubeconfig secret: %v", err)
+	}
+}
+
+func updateKubeconfigSecret(t *testing.T, ctx context.Context, c client.Client, namespace, name string, data []byte) {
+	t.Helper()
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
+		t.Fatalf("get kubeconfig secret: %v", err)
+	}
+	secret.Data["config"] = data
+	if err := c.Update(ctx, secret); err != nil {
+		t.Fatalf("update kubeconfig secret: %v", err)
 	}
 }
 
