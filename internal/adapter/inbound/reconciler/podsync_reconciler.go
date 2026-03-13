@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/kroderdev/vnode/api/v1alpha1"
@@ -101,6 +102,9 @@ func (r *PodSyncReconciler) updateExecutionConditions(ctx context.Context, names
 		base := current.DeepCopy()
 		setPodSyncCondition(&current.Status.Conditions, "PodExecutionReady", podExecutionReady, reason, message)
 		setPodSyncCondition(&current.Status.Conditions, "Degraded", degraded, reason, message)
+		if reflect.DeepEqual(base.Status, current.Status) {
+			return nil
+		}
 		if err := r.Status().Patch(ctx, &current, client.MergeFrom(base)); err != nil {
 			if isIgnorablePodSyncError(err) {
 				return nil
@@ -117,6 +121,10 @@ func setPodSyncCondition(conditions *[]metav1.Condition, conditionType string, s
 	for i := range current {
 		if current[i].Type != conditionType {
 			continue
+		}
+		if current[i].Status == status && current[i].Reason == reason && current[i].Message == message {
+			*conditions = current
+			return
 		}
 		current[i].Status = status
 		current[i].Reason = reason

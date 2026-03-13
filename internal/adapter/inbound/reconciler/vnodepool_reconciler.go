@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/kroderdev/vnode/api/v1alpha1"
@@ -225,6 +226,9 @@ func (r *VNodePoolReconciler) updatePoolStatus(ctx context.Context, namespace, n
 		}
 		base := current.DeepCopy()
 		mutate(&current.Status)
+		if reflect.DeepEqual(base.Status, current.Status) {
+			return nil
+		}
 		return r.Status().Patch(ctx, &current, client.MergeFrom(base))
 	})
 }
@@ -235,6 +239,10 @@ func setStatusCondition(conditions *[]metav1.Condition, conditionType string, st
 	for i := range current {
 		if current[i].Type != conditionType {
 			continue
+		}
+		if current[i].Status == status && current[i].Reason == reason && current[i].Message == message {
+			*conditions = current
+			return
 		}
 		current[i].Status = status
 		current[i].Reason = reason
