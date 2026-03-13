@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5](https://github.com/KroderDev/vnode/compare/v1.2.4...v1.2.5) (2026-03-13)
+
+
+### Bug Fixes
+
+* filter vnodepool reconciliation to spec-only changes ([41397f4](https://github.com/KroderDev/vnode/commit/41397f4daaaae2d004db1bdfbfc86ff124cae23e))
+
 ## [1.2.4](https://github.com/KroderDev/vnode/compare/v1.2.3...v1.2.4) (2026-03-13)
 
 
