@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/KroderDev/vnode/compare/v1.2.2...v1.2.3) (2026-03-13)
+
+
+### Bug Fixes
+
+* requeue failed vnodes for recovery ([5c6db64](https://github.com/KroderDev/vnode/commit/5c6db6469370de24a9b45fdfbf3ed9126184c419))
+
 ## [1.2.2](https://github.com/KroderDev/vnode/compare/v1.2.1...v1.2.2) (2026-03-13)
 
 
