@@ -71,8 +71,11 @@ func (r *mockNodeRepo) ListByPool(_ context.Context, namespace, poolName string)
 // mockRegistrar implements ports.NodeRegistrar with configurable errors.
 type mockRegistrar struct {
 	registerErr   error
+	updateErr     error
 	deregisterErr error
 	registered    map[string]bool
+	registerCalls int
+	updateCalls   int
 }
 
 func newMockRegistrar() *mockRegistrar {
@@ -80,6 +83,7 @@ func newMockRegistrar() *mockRegistrar {
 }
 
 func (r *mockRegistrar) Register(_ context.Context, node model.VNode, _ model.TenantRef) error {
+	r.registerCalls++
 	if r.registerErr != nil {
 		return r.registerErr
 	}
@@ -96,8 +100,9 @@ func (r *mockRegistrar) Deregister(_ context.Context, node model.VNode, _ model.
 }
 
 func (r *mockRegistrar) UpdateNodeStatus(_ context.Context, node model.VNode, _ model.TenantRef) error {
-	if r.registerErr != nil {
-		return r.registerErr
+	r.updateCalls++
+	if r.updateErr != nil {
+		return r.updateErr
 	}
 	r.registered[node.Name] = true
 	return nil
@@ -369,7 +374,7 @@ func TestNodeService_UpdateStatus_IgnoresContextCanceledFromRegistrar(t *testing
 	node := model.VNode{Name: "node-1", Namespace: "ns"}
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
-	reg.registerErr = context.Canceled
+	reg.updateErr = context.Canceled
 	svc := service.NewNodeService(repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
@@ -378,6 +383,73 @@ func TestNodeService_UpdateStatus_IgnoresContextCanceledFromRegistrar(t *testing
 	}
 	if repo.saveCalls != 0 {
 		t.Fatalf("expected no save calls after ignored registrar cancellation, got %d", repo.saveCalls)
+	}
+}
+
+func TestNodeService_UpdateStatus_RetriesInitialRegistrationAfterTransientFailure(t *testing.T) {
+	node := model.VNode{
+		Name:      "node-1",
+		Namespace: "ns",
+		Phase:     model.NodePhaseNotReady,
+		TenantRef: model.TenantRef{VClusterNamespace: "tenant-ns", KubeconfigSecret: "tenant-secret"},
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionRegistered, Status: false, Reason: "RegistrationFailed", Message: "dial tcp timeout"},
+			{Type: model.NodeConditionReady, Status: false, Reason: "RegistrationFailed", Message: "dial tcp timeout"},
+			{Type: model.NodeConditionDegraded, Status: true, Reason: "RegistrationFailed", Message: "dial tcp timeout"},
+		},
+	}
+	repo := &mockNodeRepo{}
+	reg := newMockRegistrar()
+	svc := service.NewNodeService(repo, reg)
+
+	err := svc.UpdateStatus(context.Background(), node)
+	if err != nil {
+		t.Fatalf("expected registration retry to succeed, got %v", err)
+	}
+	if reg.registerCalls != 1 {
+		t.Fatalf("expected one registration retry, got %d", reg.registerCalls)
+	}
+	if reg.updateCalls != 0 {
+		t.Fatalf("expected no status-only update call during registration retry, got %d", reg.updateCalls)
+	}
+	if repo.saveCalls != 1 {
+		t.Fatalf("expected one save call after successful retry, got %d", repo.saveCalls)
+	}
+	if len(repo.nodes) != 1 {
+		t.Fatalf("expected retried node status to be persisted, got %d nodes", len(repo.nodes))
+	}
+	if repo.nodes[0].Phase != model.NodePhaseReady {
+		t.Fatalf("expected node phase Ready after successful retry, got %s", repo.nodes[0].Phase)
+	}
+}
+
+func TestNodeService_UpdateStatus_PersistsRetryFailure(t *testing.T) {
+	node := model.VNode{
+		Name:      "node-1",
+		Namespace: "ns",
+		Phase:     model.NodePhaseNotReady,
+		TenantRef: model.TenantRef{VClusterNamespace: "tenant-ns", KubeconfigSecret: "tenant-secret"},
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionRegistered, Status: false, Reason: "RegistrationFailed", Message: "old timeout"},
+		},
+	}
+	repo := &mockNodeRepo{}
+	reg := newMockRegistrar()
+	reg.registerErr = errors.New("still timing out")
+	svc := service.NewNodeService(repo, reg)
+
+	err := svc.UpdateStatus(context.Background(), node)
+	if err == nil {
+		t.Fatal("expected registration retry failure to be returned")
+	}
+	if reg.registerCalls != 1 {
+		t.Fatalf("expected one registration retry, got %d", reg.registerCalls)
+	}
+	if len(repo.nodes) != 1 {
+		t.Fatalf("expected failed retry status to be persisted, got %d nodes", len(repo.nodes))
+	}
+	if repo.nodes[0].Phase != model.NodePhaseNotReady {
+		t.Fatalf("expected node phase NotReady after failed retry, got %s", repo.nodes[0].Phase)
 	}
 }
 

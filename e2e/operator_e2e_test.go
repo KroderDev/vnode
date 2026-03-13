@@ -194,14 +194,14 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 			return err
 		}
 		if refreshed.Status.Phase != "Ready" || refreshed.Status.ReadyNodes != 1 || refreshed.Status.TotalNodes != 1 {
-			return errors.New("scaled pool not ready yet")
+			return fmt.Errorf("scaled pool not ready yet: phase=%s ready=%d total=%d conditions=%v", refreshed.Status.Phase, refreshed.Status.ReadyNodes, refreshed.Status.TotalNodes, refreshed.Status.Conditions)
 		}
 		var nodes v1alpha1.VNodeList
 		if err := k8sClient.List(ctx, &nodes, client.InNamespace(ns), client.MatchingLabels{"vnode.kroderdev.io/pool": "pool-a"}); err != nil {
 			return err
 		}
 		if len(nodes.Items) != 1 {
-			return errors.New("expected 1 vnode after scale down")
+			return fmt.Errorf("expected 1 vnode after scale down, got %d", len(nodes.Items))
 		}
 		if _, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-a-2", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
 			return err

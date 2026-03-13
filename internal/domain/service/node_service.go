@@ -93,6 +93,34 @@ func (s *NodeService) UpdateStatus(ctx context.Context, node model.VNode) error 
 	if node.Phase == "" && len(node.Conditions) == 0 {
 		return nil
 	}
+	// A transient vcluster startup timeout can leave the VNode CR in NotReady before the
+	// tenant-side Node object ever exists. In that case, UpdateNodeStatus can never heal
+	// the node because there is nothing to update yet, so we must retry full registration.
+	if shouldRetryRegistration(node) {
+		if err := s.registrar.Register(ctx, node, node.TenantRef); err != nil {
+			if isIgnorableStatusError(err) {
+				return nil
+			}
+			node.Phase = model.NodePhaseNotReady
+			node.Conditions = registrationFailedConditions(err)
+			if saveErr := s.nodeRepo.Save(ctx, node); saveErr != nil {
+				if isIgnorableStatusError(saveErr) {
+					return nil
+				}
+				return fmt.Errorf("updating node %s status after registration retry failure: %w", node.Name, saveErr)
+			}
+			return fmt.Errorf("retrying tenant node registration for %s: %w", node.Name, err)
+		}
+		node.Phase = model.NodePhaseReady
+		node.Conditions = readyNodeConditions()
+		if err := s.nodeRepo.Save(ctx, node); err != nil {
+			if isIgnorableStatusError(err) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
 	if err := s.registrar.UpdateNodeStatus(ctx, node, node.TenantRef); err != nil {
 		if isIgnorableStatusError(err) {
 			return nil
@@ -131,6 +159,28 @@ func readyNodeConditions() []model.NodeCondition {
 		{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
 		{Type: model.NodeConditionDegraded, Status: false, Reason: "Healthy", Message: "Node registration is healthy"},
 	}
+}
+
+func registrationFailedConditions(err error) []model.NodeCondition {
+	return []model.NodeCondition{
+		{Type: model.NodeConditionKubeconfig, Status: false, Reason: "RegistrationFailed", Message: err.Error()},
+		{Type: model.NodeConditionRegistered, Status: false, Reason: "RegistrationFailed", Message: err.Error()},
+		{Type: model.NodeConditionReady, Status: false, Reason: "RegistrationFailed", Message: err.Error()},
+		{Type: model.NodeConditionDegraded, Status: true, Reason: "RegistrationFailed", Message: err.Error()},
+	}
+}
+
+func shouldRetryRegistration(node model.VNode) bool {
+	if node.Phase != model.NodePhasePending && node.Phase != model.NodePhaseNotReady {
+		return false
+	}
+	for _, condition := range node.Conditions {
+		if condition.Type != model.NodeConditionRegistered {
+			continue
+		}
+		return !condition.Status
+	}
+	return false
 }
 
 func isIgnorableStatusError(err error) bool {
