@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/kroderdev/vnode/api/v1alpha1"
 	"github.com/kroderdev/vnode/internal/domain/model"
@@ -82,7 +83,23 @@ func (r *VNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, fmt.Errorf("updating node %s: %w", node.Name, err)
 	}
 
+	// VNode owns convergence for tenant registration and heartbeat. Failed or pending nodes
+	// must reschedule themselves so transient vcluster startup timeouts can heal without
+	// depending on the parent pool controller to recreate or resync them.
+	if shouldRequeueVNode(node) {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func shouldRequeueVNode(node model.VNode) bool {
+	switch node.Phase {
+	case model.NodePhasePending, model.NodePhaseNotReady:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *VNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
