@@ -9,7 +9,7 @@ test:
 	go test ./... -v
 
 test-e2e:
-	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path)" go test ./e2e/... -v
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path)" go test ./e2e/... -count=1 -v
 
 lint:
 	golangci-lint run ./...

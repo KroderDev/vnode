@@ -85,6 +85,9 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		if current.Status.Phase != "Ready" || current.Status.ReadyNodes != 2 || current.Status.TotalNodes != 2 {
 			return errors.New("pool not ready yet")
 		}
+		if !hasCondition(current.Status.Conditions, "PodExecutionReady", metav1.ConditionTrue) {
+			return errors.New("expected pod execution ready condition")
+		}
 		return nil
 	})
 
@@ -402,7 +405,7 @@ func setupSuite() {
 			suiteSetupErr = err
 			return
 		}
-		if err := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc).SetupWithManager(mgr); err != nil {
+		if err := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc, mgr.GetEventRecorderFor("vnode-pod-sync")).SetupWithManager(mgr); err != nil {
 			suiteSetupErr = err
 			return
 		}

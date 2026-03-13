@@ -76,7 +76,7 @@ func main() {
 	// Build inbound adapters (reconcilers)
 	poolReconciler := reconciler.NewVNodePoolReconciler(mgr.GetClient(), mgr.GetScheme(), poolSvc)
 	vnodeReconciler := reconciler.NewVNodeReconciler(mgr.GetClient(), mgr.GetScheme(), nodeSvc)
-	podSyncReconciler := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc)
+	podSyncReconciler := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc, mgr.GetEventRecorderFor("vnode-pod-sync"))
 
 	if err := poolReconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create controller", "controller", "VNodePool")

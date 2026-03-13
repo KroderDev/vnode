@@ -21,6 +21,13 @@ type PodExecutionService struct {
 	tenants    *virtualkubelet.TenantClientManager
 }
 
+type PodExecutionResult struct {
+	SourcePods      int
+	CreatedHostPods int
+	DeletedHostPods int
+	SyncedStatuses  int
+}
+
 func NewPodExecutionService(nodeRepo ports.NodeRepository, hostPods ports.ClusterClient, translator ports.PodTranslator, tenants *virtualkubelet.TenantClientManager) *PodExecutionService {
 	return &PodExecutionService{
 		nodeRepo:   nodeRepo,
@@ -34,15 +41,17 @@ func (s *PodExecutionService) HostClient() ports.ClusterClient {
 	return s.hostPods
 }
 
-func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNodePool) error {
+func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNodePool) (PodExecutionResult, error) {
+	result := PodExecutionResult{}
+
 	clientset, err := s.tenants.Get(ctx, pool.TenantRef)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	nodes, err := s.nodeRepo.ListByPool(ctx, pool.Namespace, pool.Name)
 	if err != nil {
-		return fmt.Errorf("listing pool nodes: %w", err)
+		return result, fmt.Errorf("listing pool nodes: %w", err)
 	}
 
 	ready := map[string]model.VNode{}
@@ -54,43 +63,50 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 
 	sourcePods, err := listTenantPodsForNodes(ctx, clientset, ready)
 	if err != nil {
-		return err
+		return result, err
 	}
+	result.SourcePods = len(sourcePods)
 
 	desired := make(map[string]struct{}, len(sourcePods))
 	for _, sourcePod := range sourcePods {
 		translation, err := s.translator.Translate(ctx, podFromCore(sourcePod), pool, sourcePod.Spec.NodeName)
 		if err != nil {
-			return fmt.Errorf("translating pod %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
+			return result, fmt.Errorf("translating pod %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 		}
 
 		desired[keyForPod(translation.TargetPod.Namespace, translation.TargetPod.Name)] = struct{}{}
 
 		if !isTerminalPod(sourcePod) {
-			if err := ensureHostPod(ctx, s.hostPods, translation.TargetPod); err != nil {
-				return fmt.Errorf("ensuring host pod for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
+			created, err := ensureHostPod(ctx, s.hostPods, translation.TargetPod)
+			if err != nil {
+				return result, fmt.Errorf("ensuring host pod for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
+			}
+			if created {
+				result.CreatedHostPods++
 			}
 		}
 
 		hostStatus, err := s.hostPods.GetPodStatus(ctx, translation.TargetPod.Namespace, translation.TargetPod.Name)
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("getting host pod status for %s/%s: %w", translation.TargetPod.Namespace, translation.TargetPod.Name, err)
+				return result, fmt.Errorf("getting host pod status for %s/%s: %w", translation.TargetPod.Namespace, translation.TargetPod.Name, err)
 			}
 		} else {
 			synced, err := s.translator.SyncStatus(ctx, *hostStatus)
 			if err != nil {
-				return fmt.Errorf("syncing host status for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
+				return result, fmt.Errorf("syncing host status for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 			}
 			if err := updateTenantPodStatus(ctx, clientset, sourcePod.Namespace, sourcePod.Name, synced); err != nil {
-				return fmt.Errorf("updating tenant pod status for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
+				return result, fmt.Errorf("updating tenant pod status for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 			}
+			result.SyncedStatuses++
 		}
 
 		if isTerminalPod(sourcePod) {
 			if err := s.hostPods.DeletePod(ctx, translation.TargetPod.Namespace, translation.TargetPod.Name); err != nil {
-				return fmt.Errorf("deleting host pod for terminal source pod %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
+				return result, fmt.Errorf("deleting host pod for terminal source pod %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 			}
+			result.DeletedHostPods++
 		}
 	}
 
@@ -99,34 +115,37 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 		model.LabelVNodePool: pool.Name,
 	})
 	if err != nil {
-		return fmt.Errorf("listing host pods for cleanup: %w", err)
+		return result, fmt.Errorf("listing host pods for cleanup: %w", err)
 	}
 	for _, hostPod := range hostPods {
 		if _, ok := desired[keyForPod(hostPod.Namespace, hostPod.Name)]; ok {
 			continue
 		}
 		if err := s.hostPods.DeletePod(ctx, hostPod.Namespace, hostPod.Name); err != nil {
-			return fmt.Errorf("deleting orphaned host pod %s/%s: %w", hostPod.Namespace, hostPod.Name, err)
+			return result, fmt.Errorf("deleting orphaned host pod %s/%s: %w", hostPod.Namespace, hostPod.Name, err)
 		}
+		result.DeletedHostPods++
 	}
 
-	return nil
+	return result, nil
 }
 
-func CleanupPoolPods(ctx context.Context, host ports.ClusterClient, pool model.VNodePool) error {
+func CleanupPoolPods(ctx context.Context, host ports.ClusterClient, pool model.VNodePool) (int, error) {
 	pods, err := host.ListPodsByLabels(ctx, pool.Namespace, map[string]string{
 		model.LabelManagedBy: model.LabelManagedByValue,
 		model.LabelVNodePool: pool.Name,
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
+	deleted := 0
 	for _, pod := range pods {
 		if err := host.DeletePod(ctx, pod.Namespace, pod.Name); err != nil {
-			return err
+			return deleted, err
 		}
+		deleted++
 	}
-	return nil
+	return deleted, nil
 }
 
 func listTenantPodsForNodes(ctx context.Context, clientset kubernetes.Interface, ready map[string]model.VNode) ([]corev1.Pod, error) {
@@ -151,14 +170,14 @@ func listTenantPodsForNodes(ctx context.Context, clientset kubernetes.Interface,
 	return result, nil
 }
 
-func ensureHostPod(ctx context.Context, host ports.ClusterClient, pod model.PodSpec) error {
+func ensureHostPod(ctx context.Context, host ports.ClusterClient, pod model.PodSpec) (bool, error) {
 	if _, err := host.GetPod(ctx, pod.Namespace, pod.Name); err != nil {
 		if apierrors.IsNotFound(err) {
-			return host.CreatePod(ctx, pod)
+			return true, host.CreatePod(ctx, pod)
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 func updateTenantPodStatus(ctx context.Context, clientset kubernetes.Interface, namespace, name string, status model.PodStatus) error {
