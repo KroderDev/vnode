@@ -45,6 +45,9 @@ type VNode struct {
 
 // IsReady returns true if the node has a Ready condition with status true.
 func (n *VNode) IsReady() bool {
+	if n.Phase == NodePhaseReady {
+		return true
+	}
 	for _, c := range n.Conditions {
 		if c.Type == NodeConditionReady {
 			return c.Status

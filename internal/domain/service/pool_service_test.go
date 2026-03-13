@@ -289,9 +289,9 @@ func TestPoolService_Reconcile_ScaleToZero(t *testing.T) {
 func TestPoolService_Reconcile_MixedReadyNotReady(t *testing.T) {
 	repo := &fakeNodeRepo{
 		nodes: []model.VNode{
-			{Name: "n-1", Namespace: "default", PoolName: "pool", Conditions: []model.NodeCondition{{Type: model.NodeConditionReady, Status: true}}},
-			{Name: "n-2", Namespace: "default", PoolName: "pool", Conditions: []model.NodeCondition{{Type: model.NodeConditionReady, Status: false}}},
-			{Name: "n-3", Namespace: "default", PoolName: "pool"}, // no conditions
+			{Name: "n-1", Namespace: "default", PoolName: "pool", Phase: model.NodePhaseReady, Conditions: []model.NodeCondition{{Type: model.NodeConditionReady, Status: true}}},
+			{Name: "n-2", Namespace: "default", PoolName: "pool", Phase: model.NodePhaseNotReady, Conditions: []model.NodeCondition{{Type: model.NodeConditionReady, Status: false}}},
+			{Name: "n-3", Namespace: "default", PoolName: "pool", Phase: model.NodePhaseTerminating},
 		},
 	}
 	nodeSvc := &fakeNodeService{repo: repo}

@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,9 +33,13 @@ func (c *PodClusterClient) UpdatePod(ctx context.Context, pod model.PodSpec) err
 	if err := c.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, &current); err != nil {
 		return err
 	}
-	current.Labels = pod.Labels
-	current.Spec.RuntimeClassName = stringPtrOrNil(pod.RuntimeClassName)
-	current.Spec.NodeSelector = pod.NodeSelector
+	desired := podSpecToK8sPod(pod)
+	current.Labels = desired.Labels
+	current.Spec.ServiceAccountName = desired.Spec.ServiceAccountName
+	current.Spec.RuntimeClassName = desired.Spec.RuntimeClassName
+	current.Spec.NodeSelector = desired.Spec.NodeSelector
+	current.Spec.Containers = desired.Spec.Containers
+	current.Spec.Volumes = desired.Spec.Volumes
 	return c.client.Update(ctx, &current)
 }
 
@@ -104,10 +109,14 @@ func podSpecToK8sPod(pod model.PodSpec) *corev1.Pod {
 			Args:         container.Args,
 			Env:          envToK8s(container.Env),
 			VolumeMounts: volumeMountsToK8s(container.VolumeMounts),
+			Resources: corev1.ResourceRequirements{
+				Requests: resourceListToK8s(container.Resources.Requests),
+				Limits:   resourceListToK8s(container.Resources.Limits),
+			},
 		})
 	}
 	for _, volume := range pod.Volumes {
-		k8sPod.Spec.Volumes = append(k8sPod.Spec.Volumes, corev1.Volume{Name: volume.Name})
+		k8sPod.Spec.Volumes = append(k8sPod.Spec.Volumes, volumeToK8s(volume))
 	}
 	return k8sPod
 }
@@ -120,6 +129,8 @@ func podToSpec(pod *corev1.Pod) model.PodSpec {
 		NodeName:           pod.Spec.NodeName,
 		ServiceAccountName: pod.Spec.ServiceAccountName,
 		NodeSelector:       pod.Spec.NodeSelector,
+		Containers:         make([]model.Container, 0, len(pod.Spec.Containers)),
+		Volumes:            make([]model.Volume, 0, len(pod.Spec.Volumes)),
 	}
 	if pod.Spec.RuntimeClassName != nil {
 		spec.RuntimeClassName = *pod.Spec.RuntimeClassName
@@ -132,7 +143,14 @@ func podToSpec(pod *corev1.Pod) model.PodSpec {
 			Args:         container.Args,
 			Env:          envFromK8s(container.Env),
 			VolumeMounts: volumeMountsFromK8s(container.VolumeMounts),
+			Resources: model.ContainerResources{
+				Requests: resourceListFromK8s(container.Resources.Requests),
+				Limits:   resourceListFromK8s(container.Resources.Limits),
+			},
 		})
+	}
+	for _, volume := range pod.Spec.Volumes {
+		spec.Volumes = append(spec.Volumes, volumeFromK8s(volume))
 	}
 	return spec
 }
@@ -209,4 +227,71 @@ func stringPtrOrNil(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+func resourceListToK8s(in model.ResourceList) corev1.ResourceList {
+	out := corev1.ResourceList{}
+	if in.CPU != "" {
+		out[corev1.ResourceCPU] = resource.MustParse(in.CPU)
+	}
+	if in.Memory != "" {
+		out[corev1.ResourceMemory] = resource.MustParse(in.Memory)
+	}
+	return out
+}
+
+func resourceListFromK8s(in corev1.ResourceList) model.ResourceList {
+	out := model.ResourceList{}
+	if cpu, ok := in[corev1.ResourceCPU]; ok {
+		out.CPU = cpu.String()
+	}
+	if memory, ok := in[corev1.ResourceMemory]; ok {
+		out.Memory = memory.String()
+	}
+	if pods, ok := in[corev1.ResourcePods]; ok {
+		out.Pods = int32(pods.Value())
+	}
+	return out
+}
+
+func volumeToK8s(volume model.Volume) corev1.Volume {
+	out := corev1.Volume{Name: volume.Name}
+	switch volume.Type {
+	case model.VolumeTypeConfigMap:
+		out.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: volume.Source}}
+	case model.VolumeTypeSecret:
+		out.Secret = &corev1.SecretVolumeSource{SecretName: volume.Source}
+	case model.VolumeTypePVC:
+		out.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{ClaimName: volume.Source}
+	case model.VolumeTypeEmptyDir:
+		out.EmptyDir = &corev1.EmptyDirVolumeSource{}
+	case model.VolumeTypeHostPath:
+		out.HostPath = &corev1.HostPathVolumeSource{Path: volume.Source}
+	case model.VolumeTypeProjected:
+		out.Projected = &corev1.ProjectedVolumeSource{}
+	}
+	return out
+}
+
+func volumeFromK8s(volume corev1.Volume) model.Volume {
+	out := model.Volume{Name: volume.Name, Type: model.VolumeTypeOther}
+	switch {
+	case volume.ConfigMap != nil:
+		out.Type = model.VolumeTypeConfigMap
+		out.Source = volume.ConfigMap.Name
+	case volume.Secret != nil:
+		out.Type = model.VolumeTypeSecret
+		out.Source = volume.Secret.SecretName
+	case volume.PersistentVolumeClaim != nil:
+		out.Type = model.VolumeTypePVC
+		out.Source = volume.PersistentVolumeClaim.ClaimName
+	case volume.EmptyDir != nil:
+		out.Type = model.VolumeTypeEmptyDir
+	case volume.HostPath != nil:
+		out.Type = model.VolumeTypeHostPath
+		out.Source = volume.HostPath.Path
+	case volume.Projected != nil:
+		out.Type = model.VolumeTypeProjected
+	}
+	return out
 }

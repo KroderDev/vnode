@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/kroderdev/vnode/internal/adapter/outbound/virtualkubelet"
@@ -46,11 +47,17 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 
 	clientset, err := s.tenants.Get(ctx, pool.TenantRef)
 	if err != nil {
+		if isIgnorableShutdownError(err) {
+			return result, nil
+		}
 		return result, err
 	}
 
 	nodes, err := s.nodeRepo.ListByPool(ctx, pool.Namespace, pool.Name)
 	if err != nil {
+		if isIgnorableShutdownError(err) {
+			return result, nil
+		}
 		return result, fmt.Errorf("listing pool nodes: %w", err)
 	}
 
@@ -63,6 +70,9 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 
 	sourcePods, err := listTenantPodsForNodes(ctx, clientset, ready)
 	if err != nil {
+		if isIgnorableShutdownError(err) {
+			return result, nil
+		}
 		return result, err
 	}
 	result.SourcePods = len(sourcePods)
@@ -77,26 +87,41 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 		desired[keyForPod(translation.TargetPod.Namespace, translation.TargetPod.Name)] = struct{}{}
 
 		if !isTerminalPod(sourcePod) {
-			created, err := ensureHostPod(ctx, s.hostPods, translation.TargetPod)
+			created, deleted, err := ensureHostPod(ctx, s.hostPods, translation.TargetPod)
 			if err != nil {
+				if isIgnorableShutdownError(err) {
+					return result, nil
+				}
 				return result, fmt.Errorf("ensuring host pod for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 			}
 			if created {
 				result.CreatedHostPods++
+			}
+			if deleted {
+				result.DeletedHostPods++
 			}
 		}
 
 		hostStatus, err := s.hostPods.GetPodStatus(ctx, translation.TargetPod.Namespace, translation.TargetPod.Name)
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
+				if isIgnorableShutdownError(err) {
+					return result, nil
+				}
 				return result, fmt.Errorf("getting host pod status for %s/%s: %w", translation.TargetPod.Namespace, translation.TargetPod.Name, err)
 			}
 		} else {
 			synced, err := s.translator.SyncStatus(ctx, *hostStatus)
 			if err != nil {
+				if isIgnorableShutdownError(err) {
+					return result, nil
+				}
 				return result, fmt.Errorf("syncing host status for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 			}
 			if err := updateTenantPodStatus(ctx, clientset, sourcePod.Namespace, sourcePod.Name, synced); err != nil {
+				if isIgnorableShutdownError(err) {
+					return result, nil
+				}
 				return result, fmt.Errorf("updating tenant pod status for %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 			}
 			result.SyncedStatuses++
@@ -104,6 +129,9 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 
 		if isTerminalPod(sourcePod) {
 			if err := s.hostPods.DeletePod(ctx, translation.TargetPod.Namespace, translation.TargetPod.Name); err != nil {
+				if isIgnorableShutdownError(err) {
+					return result, nil
+				}
 				return result, fmt.Errorf("deleting host pod for terminal source pod %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
 			}
 			result.DeletedHostPods++
@@ -115,6 +143,9 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 		model.LabelVNodePool: pool.Name,
 	})
 	if err != nil {
+		if isIgnorableShutdownError(err) {
+			return result, nil
+		}
 		return result, fmt.Errorf("listing host pods for cleanup: %w", err)
 	}
 	for _, hostPod := range hostPods {
@@ -122,6 +153,9 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 			continue
 		}
 		if err := s.hostPods.DeletePod(ctx, hostPod.Namespace, hostPod.Name); err != nil {
+			if isIgnorableShutdownError(err) {
+				return result, nil
+			}
 			return result, fmt.Errorf("deleting orphaned host pod %s/%s: %w", hostPod.Namespace, hostPod.Name, err)
 		}
 		result.DeletedHostPods++
@@ -136,11 +170,17 @@ func CleanupPoolPods(ctx context.Context, host ports.ClusterClient, pool model.V
 		model.LabelVNodePool: pool.Name,
 	})
 	if err != nil {
+		if isIgnorableShutdownError(err) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	deleted := 0
 	for _, pod := range pods {
 		if err := host.DeletePod(ctx, pod.Namespace, pod.Name); err != nil {
+			if isIgnorableShutdownError(err) {
+				return deleted, nil
+			}
 			return deleted, err
 		}
 		deleted++
@@ -173,14 +213,24 @@ func listTenantPodsForNodes(ctx context.Context, clientset kubernetes.Interface,
 	return result, nil
 }
 
-func ensureHostPod(ctx context.Context, host ports.ClusterClient, pod model.PodSpec) (bool, error) {
-	if _, err := host.GetPod(ctx, pod.Namespace, pod.Name); err != nil {
+func ensureHostPod(ctx context.Context, host ports.ClusterClient, pod model.PodSpec) (bool, bool, error) {
+	current, err := host.GetPod(ctx, pod.Namespace, pod.Name)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return true, host.CreatePod(ctx, pod)
+			return true, false, host.CreatePod(ctx, pod)
 		}
-		return false, err
+		return false, false, err
 	}
-	return false, nil
+	if podSpecsEqual(*current, pod) {
+		return false, false, nil
+	}
+	if err := host.DeletePod(ctx, pod.Namespace, pod.Name); err != nil {
+		return false, false, err
+	}
+	if err := host.CreatePod(ctx, pod); err != nil {
+		return false, true, err
+	}
+	return true, true, nil
 }
 
 func updateTenantPodStatus(ctx context.Context, clientset kubernetes.Interface, namespace, name string, status model.PodStatus) error {
@@ -217,16 +267,30 @@ func podFromCore(pod corev1.Pod) model.PodSpec {
 	containers := make([]model.Container, 0, len(pod.Spec.Containers))
 	for _, container := range pod.Spec.Containers {
 		containers = append(containers, model.Container{
-			Name:  container.Name,
-			Image: container.Image,
+			Name:         container.Name,
+			Image:        container.Image,
+			Command:      container.Command,
+			Args:         container.Args,
+			Env:          envVarsFromCore(container.Env),
+			VolumeMounts: volumeMountsFromCore(container.VolumeMounts),
+			Resources: model.ContainerResources{
+				Requests: resourceListFromCore(container.Resources.Requests),
+				Limits:   resourceListFromCore(container.Resources.Limits),
+			},
 		})
 	}
+	volumes := make([]model.Volume, 0, len(pod.Spec.Volumes))
+	for _, volume := range pod.Spec.Volumes {
+		volumes = append(volumes, volumeFromCore(volume))
+	}
 	return model.PodSpec{
-		Name:       pod.Name,
-		Namespace:  pod.Namespace,
-		Labels:     pod.Labels,
-		NodeName:   pod.Spec.NodeName,
-		Containers: containers,
+		Name:               pod.Name,
+		Namespace:          pod.Namespace,
+		Labels:             pod.Labels,
+		NodeName:           pod.Spec.NodeName,
+		ServiceAccountName: pod.Spec.ServiceAccountName,
+		Containers:         containers,
+		Volumes:            volumes,
 	}
 }
 
@@ -236,4 +300,167 @@ func keyForPod(namespace, name string) string {
 
 func isTerminalPod(pod corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+func podSpecsEqual(a, b model.PodSpec) bool {
+	return a.Name == b.Name &&
+		a.Namespace == b.Namespace &&
+		normalizeServiceAccount(a.ServiceAccountName) == normalizeServiceAccount(b.ServiceAccountName) &&
+		a.RuntimeClassName == b.RuntimeClassName &&
+		stringMapEqual(a.Labels, b.Labels) &&
+		stringMapEqual(a.NodeSelector, b.NodeSelector) &&
+		containersEqual(a.Containers, b.Containers) &&
+		volumesEqual(a.Volumes, b.Volumes)
+}
+
+func normalizeServiceAccount(name string) string {
+	if name == "" {
+		return "default"
+	}
+	return name
+}
+
+func stringMapEqual(a, b map[string]string) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if b[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func containersEqual(a, b []model.Container) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Image != b[i].Image {
+			return false
+		}
+		if !stringSliceEqual(a[i].Command, b[i].Command) || !stringSliceEqual(a[i].Args, b[i].Args) {
+			return false
+		}
+		if !envVarsEqual(a[i].Env, b[i].Env) || !volumeMountsEqual(a[i].VolumeMounts, b[i].VolumeMounts) {
+			return false
+		}
+		if a[i].Resources != b[i].Resources {
+			return false
+		}
+	}
+	return true
+}
+
+func volumesEqual(a, b []model.Volume) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func envVarsEqual(a, b []model.EnvVar) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func volumeMountsEqual(a, b []model.VolumeMount) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func envVarsFromCore(in []corev1.EnvVar) []model.EnvVar {
+	out := make([]model.EnvVar, 0, len(in))
+	for _, env := range in {
+		out = append(out, model.EnvVar{Name: env.Name, Value: env.Value})
+	}
+	return out
+}
+
+func volumeMountsFromCore(in []corev1.VolumeMount) []model.VolumeMount {
+	out := make([]model.VolumeMount, 0, len(in))
+	for _, mount := range in {
+		out = append(out, model.VolumeMount{
+			Name:      mount.Name,
+			MountPath: mount.MountPath,
+			ReadOnly:  mount.ReadOnly,
+		})
+	}
+	return out
+}
+
+func resourceListFromCore(in corev1.ResourceList) model.ResourceList {
+	out := model.ResourceList{}
+	if cpu, ok := in[corev1.ResourceCPU]; ok {
+		out.CPU = cpu.String()
+	}
+	if memory, ok := in[corev1.ResourceMemory]; ok {
+		out.Memory = memory.String()
+	}
+	if pods, ok := in[corev1.ResourcePods]; ok {
+		out.Pods = int32(pods.Value())
+	}
+	return out
+}
+
+func volumeFromCore(in corev1.Volume) model.Volume {
+	out := model.Volume{Name: in.Name, Type: model.VolumeTypeOther}
+	switch {
+	case in.ConfigMap != nil:
+		out.Type = model.VolumeTypeConfigMap
+		out.Source = in.ConfigMap.Name
+	case in.Secret != nil:
+		out.Type = model.VolumeTypeSecret
+		out.Source = in.Secret.SecretName
+	case in.PersistentVolumeClaim != nil:
+		out.Type = model.VolumeTypePVC
+		out.Source = in.PersistentVolumeClaim.ClaimName
+	case in.EmptyDir != nil:
+		out.Type = model.VolumeTypeEmptyDir
+	case in.HostPath != nil:
+		out.Type = model.VolumeTypeHostPath
+		out.Source = in.HostPath.Path
+	case in.Projected != nil:
+		out.Type = model.VolumeTypeProjected
+	}
+	return out
+}
+
+func isIgnorableShutdownError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

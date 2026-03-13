@@ -325,7 +325,14 @@ func TestNodeService_Deprovision_DeleteError(t *testing.T) {
 // --- UpdateStatus tests ---
 
 func TestNodeService_UpdateStatus_Success(t *testing.T) {
-	node := model.VNode{Name: "node-1", Namespace: "ns"}
+	node := model.VNode{
+		Name:      "node-1",
+		Namespace: "ns",
+		Phase:     model.NodePhaseReady,
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
+		},
+	}
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
 	svc := service.NewNodeService(repo, reg)
@@ -340,7 +347,14 @@ func TestNodeService_UpdateStatus_Success(t *testing.T) {
 }
 
 func TestNodeService_UpdateStatus_Error(t *testing.T) {
-	node := model.VNode{Name: "node-1", Namespace: "ns"}
+	node := model.VNode{
+		Name:      "node-1",
+		Namespace: "ns",
+		Phase:     model.NodePhaseReady,
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
+		},
+	}
 	repo := &mockNodeRepo{saveErr: errors.New("save failed")}
 	reg := newMockRegistrar()
 	svc := service.NewNodeService(repo, reg)
@@ -348,5 +362,51 @@ func TestNodeService_UpdateStatus_Error(t *testing.T) {
 	err := svc.UpdateStatus(context.Background(), node)
 	if err == nil {
 		t.Fatal("expected error from Save")
+	}
+}
+
+func TestNodeService_UpdateStatus_IgnoresContextCanceledFromRegistrar(t *testing.T) {
+	node := model.VNode{Name: "node-1", Namespace: "ns"}
+	repo := &mockNodeRepo{}
+	reg := newMockRegistrar()
+	reg.registerErr = context.Canceled
+	svc := service.NewNodeService(repo, reg)
+
+	err := svc.UpdateStatus(context.Background(), node)
+	if err != nil {
+		t.Fatalf("expected context cancellation to be ignored, got %v", err)
+	}
+	if repo.saveCalls != 0 {
+		t.Fatalf("expected no save calls after ignored registrar cancellation, got %d", repo.saveCalls)
+	}
+}
+
+func TestNodeService_UpdateStatus_SkipsUninitializedNode(t *testing.T) {
+	node := model.VNode{Name: "node-1", Namespace: "ns"}
+	repo := &mockNodeRepo{}
+	reg := newMockRegistrar()
+	svc := service.NewNodeService(repo, reg)
+
+	err := svc.UpdateStatus(context.Background(), node)
+	if err != nil {
+		t.Fatalf("expected uninitialized node status update to be skipped, got %v", err)
+	}
+	if repo.saveCalls != 0 {
+		t.Fatalf("expected no save calls for uninitialized node, got %d", repo.saveCalls)
+	}
+	if reg.registered[node.Name] {
+		t.Fatal("expected registrar not to be invoked for uninitialized node")
+	}
+}
+
+func TestNodeService_UpdateStatus_IgnoresContextCanceledFromSave(t *testing.T) {
+	node := model.VNode{Name: "node-1", Namespace: "ns"}
+	repo := &mockNodeRepo{saveErr: context.Canceled}
+	reg := newMockRegistrar()
+	svc := service.NewNodeService(repo, reg)
+
+	err := svc.UpdateStatus(context.Background(), node)
+	if err != nil {
+		t.Fatalf("expected context cancellation from save to be ignored, got %v", err)
 	}
 }

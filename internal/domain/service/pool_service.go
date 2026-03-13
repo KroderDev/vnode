@@ -26,6 +26,7 @@ func (s *PoolService) Reconcile(ctx context.Context, pool model.VNodePool) (mode
 	if err != nil {
 		return pool, fmt.Errorf("listing nodes for pool %s: %w", pool.Name, err)
 	}
+	working := append([]model.VNode(nil), existing...)
 
 	currentCount := int32(len(existing))
 	toAdd, toRemove := pool.DesiredScaleActions(currentCount)
@@ -38,25 +39,25 @@ func (s *PoolService) Reconcile(ctx context.Context, pool model.VNodePool) (mode
 			return pool, fmt.Errorf("provisioning node %d for pool %s: %w", i, pool.Name, err)
 		}
 		pool.Nodes = append(pool.Nodes, node.Name)
+		working = append(working, node)
 	}
 
 	// Scale down: deprovision excess nodes (remove from the end)
 	for i := int32(0); i < toRemove; i++ {
-		idx := len(existing) - 1 - int(i)
+		idx := len(working) - 1
 		if idx < 0 {
 			break
 		}
-		if err := s.nodeSvc.Deprovision(ctx, existing[idx]); err != nil {
+		if err := s.nodeSvc.Deprovision(ctx, working[idx]); err != nil {
 			pool.Phase = model.PoolPhaseFailed
-			return pool, fmt.Errorf("deprovisioning node %s: %w", existing[idx].Name, err)
+			return pool, fmt.Errorf("deprovisioning node %s: %w", working[idx].Name, err)
 		}
+		working = working[:idx]
 	}
 
-	// Recount ready nodes
 	readyCount := int32(0)
-	nodes, _ := s.nodeRepo.ListByPool(ctx, pool.Namespace, pool.Name)
-	for _, n := range nodes {
-		if n.IsReady() {
+	for _, n := range working {
+		if n.Phase != model.NodePhaseNotReady && n.Phase != model.NodePhaseTerminating {
 			readyCount++
 		}
 	}
@@ -64,7 +65,7 @@ func (s *PoolService) Reconcile(ctx context.Context, pool model.VNodePool) (mode
 
 	if readyCount == pool.NodeCount {
 		pool.Phase = model.PoolPhaseReady
-	} else if toAdd > 0 || toRemove > 0 {
+	} else {
 		pool.Phase = model.PoolPhaseScaling
 	}
 

@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/kroderdev/vnode/internal/observability"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -21,10 +22,10 @@ import (
 type PodSyncReconciler struct {
 	client.Client
 	Executor *service.PodExecutionService
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
-func NewPodSyncReconciler(c client.Client, executor *service.PodExecutionService, recorder record.EventRecorder) *PodSyncReconciler {
+func NewPodSyncReconciler(c client.Client, executor *service.PodExecutionService, recorder events.EventRecorder) *PodSyncReconciler {
 	return &PodSyncReconciler{Client: c, Executor: executor, Recorder: recorder}
 }
 
@@ -50,7 +51,7 @@ func (r *PodSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 		if deleted > 0 {
 			observability.HostPodDeletes.WithLabelValues(pool.Name).Add(float64(deleted))
-			r.Recorder.Eventf(&cr, "Normal", "PodCleanupComplete", "Deleted %d host pods during pool cleanup", deleted)
+			r.Recorder.Eventf(&cr, nil, "Normal", "PodCleanupComplete", "PodCleanup", "Deleted %d host pods during pool cleanup", deleted)
 		}
 		return ctrl.Result{}, nil
 	}
@@ -61,6 +62,9 @@ func (r *PodSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	result, err := r.Executor.ReconcilePool(ctx, pool)
 	if err != nil {
+		if isIgnorablePodSyncError(err) {
+			return ctrl.Result{}, nil
+		}
 		logger.Error(err, "failed to reconcile pool pods")
 		observability.ExecutionFailures.WithLabelValues(pool.Name).Inc()
 		r.recordWarning(&cr, "PodExecutionFailed", err)
@@ -71,7 +75,7 @@ func (r *PodSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	observability.HostPodDeletes.WithLabelValues(pool.Name).Add(float64(result.DeletedHostPods))
 	observability.StatusSyncs.WithLabelValues(pool.Name).Add(float64(result.SyncedStatuses))
 	if result.CreatedHostPods > 0 || result.DeletedHostPods > 0 || result.SyncedStatuses > 0 {
-		r.Recorder.Eventf(&cr, "Normal", "PodExecutionSynced", "Processed %d tenant pods, created %d host pods, deleted %d host pods, synced %d statuses", result.SourcePods, result.CreatedHostPods, result.DeletedHostPods, result.SyncedStatuses)
+		r.Recorder.Eventf(&cr, nil, "Normal", "PodExecutionSynced", "PodSync", "Processed %d tenant pods, created %d host pods, deleted %d host pods, synced %d statuses", result.SourcePods, result.CreatedHostPods, result.DeletedHostPods, result.SyncedStatuses)
 	}
 	_ = r.updateExecutionConditions(ctx, cr.Namespace, cr.Name, metav1.ConditionTrue, metav1.ConditionFalse, "PodExecutionReady", fmt.Sprintf("Processed %d tenant pods", result.SourcePods))
 
@@ -89,11 +93,21 @@ func (r *PodSyncReconciler) updateExecutionConditions(ctx context.Context, names
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var current v1alpha1.VNodePool
 		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &current); err != nil {
+			if isIgnorablePodSyncError(err) {
+				return nil
+			}
 			return err
 		}
+		base := current.DeepCopy()
 		setPodSyncCondition(&current.Status.Conditions, "PodExecutionReady", podExecutionReady, reason, message)
 		setPodSyncCondition(&current.Status.Conditions, "Degraded", degraded, reason, message)
-		return r.Status().Update(ctx, &current)
+		if err := r.Status().Patch(ctx, &current, client.MergeFrom(base)); err != nil {
+			if isIgnorablePodSyncError(err) {
+				return nil
+			}
+			return err
+		}
+		return nil
 	})
 }
 
@@ -124,5 +138,9 @@ func (r *PodSyncReconciler) recordWarning(pool *v1alpha1.VNodePool, reason strin
 	if r.Recorder == nil {
 		return
 	}
-	r.Recorder.Eventf(pool, "Warning", reason, "%v", err)
+	r.Recorder.Eventf(pool, nil, "Warning", reason, "PodSync", "%v", err)
+}
+
+func isIgnorablePodSyncError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

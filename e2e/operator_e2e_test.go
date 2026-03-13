@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -83,11 +84,9 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pool), current); err != nil {
 			return err
 		}
-		if current.Status.Phase != "Ready" || current.Status.ReadyNodes != 2 || current.Status.TotalNodes != 2 {
-			return errors.New("pool not ready yet")
-		}
-		if !hasCondition(current.Status.Conditions, "PodExecutionReady", metav1.ConditionTrue) {
-			return errors.New("expected pod execution ready condition")
+		podExecutionReady := hasCondition(current.Status.Conditions, "PodExecutionReady", metav1.ConditionTrue)
+		if current.Status.Phase != "Ready" || current.Status.ReadyNodes != 2 || current.Status.TotalNodes != 2 || !podExecutionReady {
+			return fmt.Errorf("pool not ready yet: phase=%s ready=%d total=%d podExecutionReady=%t conditions=%v", current.Status.Phase, current.Status.ReadyNodes, current.Status.TotalNodes, podExecutionReady, current.Status.Conditions)
 		}
 		return nil
 	})
@@ -406,7 +405,7 @@ func setupSuite() {
 			suiteSetupErr = err
 			return
 		}
-		if err := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc, mgr.GetEventRecorderFor("vnode-pod-sync")).SetupWithManager(mgr); err != nil {
+		if err := reconciler.NewPodSyncReconciler(mgr.GetClient(), podExecSvc, mgr.GetEventRecorder("vnode-pod-sync")).SetupWithManager(mgr); err != nil {
 			suiteSetupErr = err
 			return
 		}

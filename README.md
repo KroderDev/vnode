@@ -87,17 +87,19 @@ What exists today:
 
 - CRD types for `VNodePool` and `VNode`
 - reconciliation flow for pool and node objects
-- domain model and service layer with unit tests
-- kubeconfig secret resolution
-- pod translation domain logic
+- real target-cluster node registration from kubeconfig secrets
+- target-cluster lease creation and cleanup
+- translated host pod creation from tenant-scheduled pods
+- host pod status sync back into tenant pods
+- pool and pod execution conditions, events, and metrics
+- domain model and service layer with unit and end-to-end tests
 - runtime adapter abstraction
 
 What is still being completed:
 
-- real multi-tenant virtual node registration against target clusters
-- host pod lifecycle execution from translated tenant pods
-- status sync from host workloads back to tenant clusters
-- production-grade placement, cleanup, metrics, and autoscaling
+- host pod drift reconciliation is being tightened so source spec changes trigger safe host pod replacement
+- stronger retry, conflict, and shutdown handling around status updates
+- production-grade placement, cleanup, autoscaling, and installation packaging
 
 ## Design principles
 
@@ -133,10 +135,10 @@ See [ROADMAP.md](ROADMAP.md).
 
 The short version:
 
-1. Finish real node registration and pod execution flow.
+1. Finish spec drift replacement behavior and shutdown-safe status reconciliation.
 2. Add placement and lifecycle safety for shared and dedicated pools.
-3. Add autoscaling, metrics, and admission policy.
-4. Harden for production and document installation paths.
+3. Add autoscaling and admission policy.
+4. Harden installation, RBAC, and operational docs.
 
 ## Development
 

@@ -48,7 +48,7 @@ Exit criteria:
 
 ### Phase 2: Real execution path
 
-Status: partial
+Status: mostly complete
 
 Objectives:
 
@@ -64,6 +64,20 @@ Exit criteria:
 - scheduling a pod to a virtual node results in host execution
 - tenant-side pod status reflects host-side execution
 - deleting a pool leaves no orphaned node or workload artifacts
+
+Current state:
+
+- tenant kubeconfig resolution is wired into a cached tenant client manager
+- `VNode` reconciliation registers real target-cluster Nodes and Leases
+- translated host pods are created and cleaned up
+- host pod status is mirrored back into tenant pods
+- pod execution conditions, events, and metrics exist
+
+Remaining work in this phase:
+
+- finish host pod drift replacement behavior for tenant pod spec changes
+- reduce conflict and shutdown noise in status and cleanup paths
+- tighten cleanup behavior for reschedules and partial failures
 
 ### Phase 3: Placement and tenancy policy
 
@@ -92,6 +106,7 @@ Objectives:
 - Helm chart and installation docs
 - end-to-end tests with virtual clusters
 - RBAC tightening and security review
+- shutdown-tolerant reconcile behavior and conflict-safe status writes
 
 Exit criteria:
 

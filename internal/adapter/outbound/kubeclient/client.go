@@ -2,6 +2,7 @@ package kubeclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/kroderdev/vnode/api/v1alpha1"
@@ -180,10 +181,22 @@ func (r *NodeRepository) Save(ctx context.Context, node model.VNode) error {
 	if cr.Annotations == nil {
 		cr.Annotations = map[string]string{}
 	}
-	cr.Annotations[annotationVClusterName] = node.TenantRef.VClusterName
-	cr.Annotations[annotationVClusterNamespace] = node.TenantRef.VClusterNamespace
-	cr.Annotations[annotationKubeconfigSecret] = node.TenantRef.KubeconfigSecret
-	if err := r.client.Update(ctx, &cr); err != nil {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current v1alpha1.VNode
+		if err := r.client.Get(ctx, client.ObjectKey{Namespace: node.Namespace, Name: node.Name}, &current); err != nil {
+			return err
+		}
+		if current.Annotations == nil {
+			current.Annotations = map[string]string{}
+		}
+		current.Annotations[annotationVClusterName] = node.TenantRef.VClusterName
+		current.Annotations[annotationVClusterNamespace] = node.TenantRef.VClusterNamespace
+		current.Annotations[annotationKubeconfigSecret] = node.TenantRef.KubeconfigSecret
+		return r.client.Update(ctx, &current)
+	}); err != nil {
+		if isIgnorableClientError(err) {
+			return nil
+		}
 		return err
 	}
 
@@ -255,12 +268,18 @@ func (r *NodeRepository) updateStatus(ctx context.Context, node model.VNode) err
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var current v1alpha1.VNode
 		if err := r.client.Get(ctx, client.ObjectKey{Namespace: node.Namespace, Name: node.Name}, &current); err != nil {
+			if isIgnorableClientError(err) {
+				return nil
+			}
 			return err
 		}
 
 		applyNodeStatus(&current, node)
 
 		if err := r.client.Status().Update(ctx, &current); err != nil {
+			if isIgnorableClientError(err) {
+				return nil
+			}
 			if apierrors.IsConflict(err) {
 				return err
 			}
@@ -268,6 +287,10 @@ func (r *NodeRepository) updateStatus(ctx context.Context, node model.VNode) err
 		}
 		return nil
 	})
+}
+
+func isIgnorableClientError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func applyNodeStatus(cr *v1alpha1.VNode, node model.VNode) {

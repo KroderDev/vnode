@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/kroderdev/vnode/internal/domain/model"
@@ -59,13 +60,7 @@ func (s *NodeService) Provision(ctx context.Context, pool model.VNodePool) (mode
 	}
 
 	node.Phase = model.NodePhaseReady
-	node.Conditions = []model.NodeCondition{
-		{Type: model.NodeConditionKubeconfig, Status: true, Reason: "KubeconfigResolved", Message: "Tenant kubeconfig resolved"},
-		{Type: model.NodeConditionRegistered, Status: true, Reason: "RegistrationSucceeded", Message: "Node registered in tenant cluster"},
-		{Type: model.NodeConditionLease, Status: true, Reason: "LeaseActive", Message: "Node lease is active"},
-		{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
-		{Type: model.NodeConditionDegraded, Status: false, Reason: "Healthy", Message: "Node registration is healthy"},
-	}
+	node.Conditions = readyNodeConditions()
 
 	if err := s.nodeRepo.Save(ctx, node); err != nil {
 		return node, fmt.Errorf("updating node %s status: %w", node.Name, err)
@@ -95,16 +90,49 @@ func (s *NodeService) Deprovision(ctx context.Context, node model.VNode) error {
 }
 
 func (s *NodeService) UpdateStatus(ctx context.Context, node model.VNode) error {
+	if node.Phase == "" && len(node.Conditions) == 0 {
+		return nil
+	}
 	if err := s.registrar.UpdateNodeStatus(ctx, node, node.TenantRef); err != nil {
+		if isIgnorableStatusError(err) {
+			return nil
+		}
 		node.Phase = model.NodePhaseNotReady
 		node.Conditions = []model.NodeCondition{
 			{Type: model.NodeConditionReady, Status: false, Reason: "StatusSyncFailed", Message: err.Error()},
 			{Type: model.NodeConditionDegraded, Status: true, Reason: "StatusSyncFailed", Message: err.Error()},
 		}
 		if saveErr := s.nodeRepo.Save(ctx, node); saveErr != nil {
+			if isIgnorableStatusError(saveErr) {
+				return nil
+			}
 			return fmt.Errorf("updating node %s status after sync failure: %w", node.Name, saveErr)
 		}
 		return fmt.Errorf("syncing tenant node status for %s: %w", node.Name, err)
 	}
-	return s.nodeRepo.Save(ctx, node)
+	if node.Phase != model.NodePhaseReady || !node.IsReady() {
+		node.Phase = model.NodePhaseReady
+		node.Conditions = readyNodeConditions()
+	}
+	if err := s.nodeRepo.Save(ctx, node); err != nil {
+		if isIgnorableStatusError(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func readyNodeConditions() []model.NodeCondition {
+	return []model.NodeCondition{
+		{Type: model.NodeConditionKubeconfig, Status: true, Reason: "KubeconfigResolved", Message: "Tenant kubeconfig resolved"},
+		{Type: model.NodeConditionRegistered, Status: true, Reason: "RegistrationSucceeded", Message: "Node registered in tenant cluster"},
+		{Type: model.NodeConditionLease, Status: true, Reason: "LeaseActive", Message: "Node lease is active"},
+		{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
+		{Type: model.NodeConditionDegraded, Status: false, Reason: "Healthy", Message: "Node registration is healthy"},
+	}
+}
+
+func isIgnorableStatusError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

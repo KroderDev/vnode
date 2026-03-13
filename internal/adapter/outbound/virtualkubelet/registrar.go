@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 )
 
 const leaseNamespace = "kube-node-lease"
@@ -146,16 +147,21 @@ func (r *Registrar) UpdateNodeStatus(ctx context.Context, node model.VNode, tena
 		return err
 	}
 
-	current, err := clientset.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("getting tenant node %s: %w", node.Name, err)
-	}
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := clientset.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("getting tenant node %s: %w", node.Name, err)
+		}
 
-	current.Status.Capacity = buildResources(node.Capacity)
-	current.Status.Allocatable = buildResources(node.Allocatable)
-	current.Status.Conditions = buildNodeConditions(node)
+		current.Status.Capacity = buildResources(node.Capacity)
+		current.Status.Allocatable = buildResources(node.Allocatable)
+		current.Status.Conditions = buildNodeConditions(node)
 
-	if _, err := clientset.CoreV1().Nodes().UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
+		if _, err := clientset.CoreV1().Nodes().UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("updating tenant node %s status: %w", node.Name, err)
 	}
 

@@ -223,8 +223,9 @@ func (r *VNodePoolReconciler) updatePoolStatus(ctx context.Context, namespace, n
 		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &current); err != nil {
 			return err
 		}
+		base := current.DeepCopy()
 		mutate(&current.Status)
-		return r.Status().Update(ctx, &current)
+		return r.Status().Patch(ctx, &current, client.MergeFrom(base))
 	})
 }
 

@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/kroderdev/vnode/api/v1alpha1"
@@ -74,7 +75,7 @@ func (r *VNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if err := r.NodeSvc.UpdateStatus(ctx, node); err != nil {
-		if apierrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "failed to update node status")
