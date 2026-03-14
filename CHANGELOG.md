@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/KroderDev/vnode/compare/v1.4.1...v1.4.2) (2026-03-14)
+
+
+### Bug Fixes
+
+* **deletion:** best-effort deregistration so VNodePool deletion is not blocked ([a3d8c89](https://github.com/KroderDev/vnode/commit/a3d8c8988d900310e73c7f6ccf2ce4452694ef61))
+
 ## [1.4.1](https://github.com/KroderDev/vnode/compare/v1.4.0...v1.4.1) (2026-03-14)
 
 
