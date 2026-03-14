@@ -303,8 +303,9 @@ func buildNodeConditions(node model.VNode) []corev1.NodeCondition {
 
 func nodeLabels(node model.VNode) map[string]string {
 	return map[string]string{
-		"kubernetes.io/os":          "linux",
-		"kubernetes.io/arch":        "amd64",
+		"kubernetes.io/os":       "linux",
+		"kubernetes.io/arch":     "amd64",
+		"kubernetes.io/hostname": node.Name,
 		"node.kubernetes.io/exclude-from-external-load-balancers": "true",
 		"node-role.kubernetes.io/worker": "",
 		"vnode.kroderdev.io/managed":    "true",

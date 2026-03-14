@@ -117,13 +117,17 @@ func (s *NodeService) UpdateStatus(ctx context.Context, node model.VNode) error 
 			if isIgnorableStatusError(err) {
 				return nil
 			}
-			node.Phase = model.NodePhaseNotReady
-			node.Conditions = registrationFailedConditions(err)
-			if saveErr := s.nodeRepo.Save(ctx, node); saveErr != nil {
-				if isIgnorableStatusError(saveErr) {
-					return nil
+			// Only save if the phase actually changed — avoids triggering a
+			// watch-based re-reconcile when the node is already NotReady.
+			if node.Phase != model.NodePhaseNotReady {
+				node.Phase = model.NodePhaseNotReady
+				node.Conditions = registrationFailedConditions(err)
+				if saveErr := s.nodeRepo.Save(ctx, node); saveErr != nil {
+					if isIgnorableStatusError(saveErr) {
+						return nil
+					}
+					return fmt.Errorf("updating node %s status after registration retry failure: %w", node.Name, saveErr)
 				}
-				return fmt.Errorf("updating node %s status after registration retry failure: %w", node.Name, saveErr)
 			}
 			return fmt.Errorf("retrying tenant node registration for %s: %w", node.Name, err)
 		}

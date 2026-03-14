@@ -454,6 +454,8 @@ func TestNodeService_UpdateStatus_RetriesInitialRegistrationAfterTransientFailur
 }
 
 func TestNodeService_UpdateStatus_PersistsRetryFailure(t *testing.T) {
+	// When the node is already NotReady, a failed retry should NOT save again
+	// (to avoid triggering a watch-based re-reconcile loop).
 	node := model.VNode{
 		Name:      "node-1",
 		Namespace: "ns",
@@ -474,6 +476,31 @@ func TestNodeService_UpdateStatus_PersistsRetryFailure(t *testing.T) {
 	}
 	if reg.registerCalls != 1 {
 		t.Fatalf("expected one registration retry, got %d", reg.registerCalls)
+	}
+	if repo.saveCalls != 0 {
+		t.Fatalf("expected no save when node is already NotReady, got %d", repo.saveCalls)
+	}
+}
+
+func TestNodeService_UpdateStatus_PersistsRetryFailure_FromPending(t *testing.T) {
+	// When the node transitions from Pending to NotReady, the save IS needed.
+	node := model.VNode{
+		Name:      "node-1",
+		Namespace: "ns",
+		Phase:     model.NodePhasePending,
+		TenantRef: model.TenantRef{VClusterNamespace: "tenant-ns", KubeconfigSecret: "tenant-secret"},
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionRegistered, Status: false, Reason: "Registering", Message: "initial"},
+		},
+	}
+	repo := &mockNodeRepo{}
+	reg := newMockRegistrar()
+	reg.registerErr = errors.New("still timing out")
+	svc := service.NewNodeService(discardLogger(), repo, reg)
+
+	err := svc.UpdateStatus(context.Background(), node)
+	if err == nil {
+		t.Fatal("expected registration retry failure to be returned")
 	}
 	if len(repo.nodes) != 1 {
 		t.Fatalf("expected failed retry status to be persisted, got %d nodes", len(repo.nodes))
