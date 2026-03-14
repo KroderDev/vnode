@@ -143,10 +143,12 @@ func (s *NodeService) UpdateStatus(ctx context.Context, node model.VNode) error 
 		}
 		return fmt.Errorf("syncing tenant node status for %s: %w", node.Name, err)
 	}
-	if node.Phase != model.NodePhaseReady || !node.IsReady() {
-		node.Phase = model.NodePhaseReady
-		node.Conditions = readyNodeConditions()
+	if node.Phase == model.NodePhaseReady && node.IsReady() {
+		// Nothing changed — skip save to avoid triggering a redundant reconcile.
+		return nil
 	}
+	node.Phase = model.NodePhaseReady
+	node.Conditions = readyNodeConditions()
 	if err := s.nodeRepo.Save(ctx, node); err != nil {
 		if isIgnorableStatusError(err) {
 			return nil
