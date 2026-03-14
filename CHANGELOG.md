@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0](https://github.com/KroderDev/vnode/compare/v1.2.7...v1.3.0) (2026-03-14)
+
+
+### Features
+
+* show version and role on tenant virtual nodes ([dea2e4d](https://github.com/KroderDev/vnode/commit/dea2e4d7eb28b7241df5530595915a232a6e93a2))
+
+
+### Bug Fixes
+
+* add standard kubernetes labels to virtual nodes ([a664711](https://github.com/KroderDev/vnode/commit/a66471163553960a522853043a03d3265c78a81f))
+
+
+### Documentation
+
+* update README.md ([07dff0d](https://github.com/KroderDev/vnode/commit/07dff0d6d256673bb691b652a52a579394011594))
+* update ROADMAP.md ([d7739e9](https://github.com/KroderDev/vnode/commit/d7739e9ece23481c74b3e7ae9cbccf8dbdffba02))
+
 ## [1.2.7](https://github.com/KroderDev/vnode/compare/v1.2.6...v1.2.7) (2026-03-14)
 
 
