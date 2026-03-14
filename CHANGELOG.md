@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/KroderDev/vnode/compare/v1.4.0...v1.4.1) (2026-03-14)
+
+
+### Bug Fixes
+
+* **reconcile:** exponential backoff & skip ready node reconcile loop ([76f5ae8](https://github.com/KroderDev/vnode/commit/76f5ae8b5f6ef0c4c44f593956cf4cd8599784da))
+* **reconcile:** non commited file ([723d2d6](https://github.com/KroderDev/vnode/commit/723d2d6f02f2ae858340ea6aee9e177b8b2b1e1d))
+
 ## [1.4.0](https://github.com/KroderDev/vnode/compare/v1.3.0...v1.4.0) (2026-03-14)
 
 
