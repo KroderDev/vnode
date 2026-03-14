@@ -5,7 +5,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -o /vnode ./cmd/vnode
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags "-X github.com/kroderdev/vnode/internal/version.Version=${VERSION}" -o /vnode ./cmd/vnode
 
 FROM gcr.io/distroless/static-debian13:nonroot
 

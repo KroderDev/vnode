@@ -8,6 +8,7 @@ import (
 
 	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/ports"
+	"github.com/kroderdev/vnode/internal/version"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -156,6 +157,12 @@ func (r *Registrar) UpdateNodeStatus(ctx context.Context, node model.VNode, tena
 		current.Status.Capacity = buildResources(node.Capacity)
 		current.Status.Allocatable = buildResources(node.Allocatable)
 		current.Status.Conditions = buildNodeConditions(node)
+		current.Status.NodeInfo = corev1.NodeSystemInfo{
+			KubeletVersion:          "vnode/" + version.Version,
+			OperatingSystem:         "linux",
+			Architecture:            "amd64",
+			ContainerRuntimeVersion: "vnode/" + version.Version,
+		}
 
 		if _, err := clientset.CoreV1().Nodes().UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
 			return err
@@ -299,9 +306,10 @@ func nodeLabels(node model.VNode) map[string]string {
 		"kubernetes.io/os":          "linux",
 		"kubernetes.io/arch":        "amd64",
 		"node.kubernetes.io/exclude-from-external-load-balancers": "true",
-		"vnode.kroderdev.io/managed": "true",
-		"vnode.kroderdev.io/pool":    node.PoolName,
-		"vnode.kroderdev.io/vnode":   node.Name,
+		"node-role.kubernetes.io/vnode": "",
+		"vnode.kroderdev.io/managed":    "true",
+		"vnode.kroderdev.io/pool":       node.PoolName,
+		"vnode.kroderdev.io/vnode":      node.Name,
 	}
 }
 

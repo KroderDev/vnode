@@ -2,8 +2,10 @@
 
 all: tidy vet lint test build
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 build:
-	go build -o bin/ ./cmd/vnode
+	go build -ldflags "-X github.com/kroderdev/vnode/internal/version.Version=$(VERSION)" -o bin/ ./cmd/vnode
 
 test:
 	go test ./... -v
