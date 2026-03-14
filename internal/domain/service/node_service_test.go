@@ -346,18 +346,42 @@ func TestNodeService_UpdateStatus_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// Already-ready node skips redundant save to avoid triggering reconcile loop.
+	if repo.saveCalls != 0 {
+		t.Errorf("expected 0 save calls for already-ready node, got %d", repo.saveCalls)
+	}
+}
+
+func TestNodeService_UpdateStatus_TransitionsToReady(t *testing.T) {
+	node := model.VNode{
+		Name:      "node-1",
+		Namespace: "ns",
+		Phase:     model.NodePhaseNotReady,
+		Conditions: []model.NodeCondition{
+			{Type: model.NodeConditionReady, Status: false, Reason: "StatusSyncFailed", Message: "error"},
+		},
+	}
+	repo := &mockNodeRepo{}
+	reg := newMockRegistrar()
+	svc := service.NewNodeService(repo, reg)
+
+	err := svc.UpdateStatus(context.Background(), node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if repo.saveCalls != 1 {
-		t.Errorf("expected 1 save call, got %d", repo.saveCalls)
+		t.Errorf("expected 1 save call for NotReady->Ready transition, got %d", repo.saveCalls)
 	}
 }
 
 func TestNodeService_UpdateStatus_Error(t *testing.T) {
+	// Use a non-ready node so that save is actually called.
 	node := model.VNode{
 		Name:      "node-1",
 		Namespace: "ns",
-		Phase:     model.NodePhaseReady,
+		Phase:     model.NodePhaseNotReady,
 		Conditions: []model.NodeCondition{
-			{Type: model.NodeConditionReady, Status: true, Reason: "Ready", Message: "Node is ready"},
+			{Type: model.NodeConditionReady, Status: false, Reason: "StatusSyncFailed", Message: "error"},
 		},
 	}
 	repo := &mockNodeRepo{saveErr: errors.New("save failed")}

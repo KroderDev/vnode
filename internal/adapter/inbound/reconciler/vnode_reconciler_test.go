@@ -42,8 +42,9 @@ func TestVNodeReconciler_RequeuesNotReadyNodes(t *testing.T) {
 
 	nodeCR := &v1alpha1.VNode{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "node-1",
-			Namespace: "default",
+			Name:              "node-1",
+			Namespace:         "default",
+			CreationTimestamp: metav1.Now(),
 		},
 		Spec: v1alpha1.VNodeSpec{
 			PoolRef: "pool-a",
@@ -81,6 +82,7 @@ func TestVNodeReconciler_RequeuesNotReadyNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
+	// New node (age < 30s) should get minimum backoff of 2s.
 	if result.RequeueAfter != 2*time.Second {
 		t.Fatalf("expected RequeueAfter 2s, got %s", result.RequeueAfter)
 	}

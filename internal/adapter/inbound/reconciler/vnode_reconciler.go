@@ -22,6 +22,9 @@ const (
 	vnodeAnnotationVClusterName      = "vnode.kroderdev.io/vcluster-name"
 	vnodeAnnotationVClusterNamespace = "vnode.kroderdev.io/vcluster-namespace"
 	vnodeAnnotationKubeconfigSecret  = "vnode.kroderdev.io/kubeconfig-secret"
+
+	vnodeMinRequeue = 2 * time.Second
+	vnodeMaxRequeue = 60 * time.Second
 )
 
 // VNodeReconciler reconciles VNode objects.
@@ -87,7 +90,9 @@ func (r *VNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// must reschedule themselves so transient vcluster startup timeouts can heal without
 	// depending on the parent pool controller to recreate or resync them.
 	if shouldRequeueVNode(node) {
-		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		delay := requeueBackoff(&cr)
+		logger.Info("requeuing VNode", "name", cr.Name, "delay", delay)
+		return ctrl.Result{RequeueAfter: delay}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -100,6 +105,21 @@ func shouldRequeueVNode(node model.VNode) bool {
 	default:
 		return false
 	}
+}
+
+// requeueBackoff calculates an exponential backoff based on how long the VNode
+// has been stuck. This prevents hot-looping when a vCluster is not yet reachable.
+func requeueBackoff(cr *v1alpha1.VNode) time.Duration {
+	age := time.Since(cr.CreationTimestamp.Time)
+	// Double the requeue interval for every 30 seconds of age, capped at max.
+	delay := vnodeMinRequeue
+	for threshold := 30 * time.Second; threshold <= age && delay < vnodeMaxRequeue; threshold += 30 * time.Second {
+		delay *= 2
+	}
+	if delay > vnodeMaxRequeue {
+		delay = vnodeMaxRequeue
+	}
+	return delay
 }
 
 func (r *VNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
