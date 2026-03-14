@@ -33,6 +33,36 @@ func TestVNodePoolPredicatesIgnoreStatusOnlyUpdates(t *testing.T) {
 	}
 }
 
+func TestVNodePhaseChangedPredicateIgnoresSamePhase(t *testing.T) {
+	pred := vnodePhaseChangedPredicate()
+
+	old := &v1alpha1.VNode{
+		ObjectMeta: metav1.ObjectMeta{Name: "n1", Namespace: "ns"},
+		Status:     v1alpha1.VNodeStatus{Phase: "NotReady"},
+	}
+	new := old.DeepCopy()
+	new.Status.Conditions = []metav1.Condition{{Type: "Registered", Status: metav1.ConditionTrue}}
+
+	if pred.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: new}) {
+		t.Fatal("expected same-phase VNode update to be ignored")
+	}
+}
+
+func TestVNodePhaseChangedPredicateTriggersOnPhaseChange(t *testing.T) {
+	pred := vnodePhaseChangedPredicate()
+
+	old := &v1alpha1.VNode{
+		ObjectMeta: metav1.ObjectMeta{Name: "n1", Namespace: "ns"},
+		Status:     v1alpha1.VNodeStatus{Phase: "NotReady"},
+	}
+	new := old.DeepCopy()
+	new.Status.Phase = "Ready"
+
+	if !pred.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: new}) {
+		t.Fatal("expected phase-changing VNode update to trigger reconcile")
+	}
+}
+
 func TestVNodePoolPredicatesAllowGenerationChanges(t *testing.T) {
 	predicate := vnodePoolPredicates()
 

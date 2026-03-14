@@ -18,8 +18,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 func mapTaints(in []corev1.Taint) []model.Taint {
@@ -213,11 +216,50 @@ func crToPoolModel(cr *v1alpha1.VNodePool) model.VNodePool {
 func (r *VNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.VNodePool{}, builder.WithPredicates(vnodePoolPredicates())).
+		Watches(&v1alpha1.VNode{},
+			handler.EnqueueRequestsFromMapFunc(vnodeToPool),
+			builder.WithPredicates(vnodePhaseChangedPredicate()),
+		).
 		Complete(r)
 }
 
 func vnodePoolPredicates() predicate.Predicate {
 	return predicate.GenerationChangedPredicate{}
+}
+
+// vnodeToPool maps a VNode event to its parent VNodePool reconcile request.
+func vnodeToPool(_ context.Context, obj client.Object) []reconcile.Request {
+	vnode, ok := obj.(*v1alpha1.VNode)
+	if !ok {
+		return nil
+	}
+	poolName := vnode.Labels["vnode.kroderdev.io/pool"]
+	if poolName == "" {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: client.ObjectKey{
+			Namespace: vnode.Namespace,
+			Name:      poolName,
+		},
+	}}
+}
+
+// vnodePhaseChangedPredicate triggers only when a VNode's status phase changes.
+func vnodePhaseChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return false },
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldVNode, ok1 := e.ObjectOld.(*v1alpha1.VNode)
+			newVNode, ok2 := e.ObjectNew.(*v1alpha1.VNode)
+			if !ok1 || !ok2 {
+				return false
+			}
+			return oldVNode.Status.Phase != newVNode.Status.Phase
+		},
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}
 }
 
 func (r *VNodePoolReconciler) updatePoolStatus(ctx context.Context, namespace, name string, mutate func(*v1alpha1.VNodePoolStatus)) error {
