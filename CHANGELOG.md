@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.4](https://github.com/KroderDev/vnode/compare/v1.4.3...v1.4.4) (2026-03-14)
+
+
+### Bug Fixes
+
+* **podsync:** default runtimeClassName to empty and handle terminating host pods ([b4452ac](https://github.com/KroderDev/vnode/commit/b4452ac3f1cd78b03eedac35299cb6bb639cbfc8))
+
 ## [1.4.3](https://github.com/KroderDev/vnode/compare/v1.4.2...v1.4.3) (2026-03-14)
 
 
