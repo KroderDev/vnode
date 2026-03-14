@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.7](https://github.com/KroderDev/vnode/compare/v1.2.6...v1.2.7) (2026-03-14)
+
+
+### Bug Fixes
+
+* watch VNode phase changes to update pool status ([83b074a](https://github.com/KroderDev/vnode/commit/83b074aedb79df0f8feec5f3f4285bc72dafcf9f))
+
 ## [1.2.6](https://github.com/KroderDev/vnode/compare/v1.2.5...v1.2.6) (2026-03-13)
 
 
