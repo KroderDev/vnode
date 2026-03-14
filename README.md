@@ -32,40 +32,169 @@ Virtual clusters are cheap to create, but node-based tenancy is still expensive 
 - Clean lifecycle management with Kubernetes-native APIs.
 - Generic primitives that can be mapped to many product or pricing models.
 
-## Architecture
+## How it works
 
-At a high level:
+### Lifecycle overview
 
-1. A platform operator creates a `VNodePool` custom resource.
-2. `vnode` reconciles the desired virtual node count.
-3. Each virtual node is registered into the target cluster.
-4. Pods scheduled to those nodes are translated into host-cluster workloads.
-5. Host pod status is synced back so the tenant cluster remains usable with normal Kubernetes tooling.
+```mermaid
+sequenceDiagram
+    participant PO as Platform Operator
+    participant VO as vnode Operator
+    participant TC as Tenant Cluster
 
-Core pieces:
+    PO->>VO: 1. Create VNodePool CR
+    VO->>VO: 2. Create VNode CRs (one per desired node)
+    VO->>VO: 3. Resolve kubeconfig from Secret
+    VO->>TC: 4. Register Node objects
+    VO->>TC: 5. Create node Leases
+    VO->>TC: 6. Watch tenant pods scheduled to virtual nodes
+    VO->>VO: 7. Translate pod specs and create host pods
+    VO->>TC: 8. Sync host pod status back to tenant pods
+```
 
-- `VNodePool`: desired pool policy and capacity.
-- `VNode`: one virtual node managed by the pool.
-- Node registrar: connects to the target cluster and maintains virtual node presence.
-- Pod translator: rewrites tenant pod specs for host execution.
-- Status syncer: reflects host workload status back into the target cluster.
+### Step by step
+
+1. **VNodePool creation** — A platform component (e.g., a provisioning worker) creates a `VNodePool` custom resource in the host cluster. The pool references a tenant vcluster via a kubeconfig Secret and declares the desired node count, per-node capacity, pool mode, and isolation backend.
+
+2. **VNode provisioning** — The VNodePool reconciler calls the PoolService, which calculates the desired scale actions. For each node to add, the NodeService creates a `VNode` CR and registers it as a real Node object inside the tenant cluster.
+
+3. **Kubeconfig resolution** — The operator reads the tenant kubeconfig from a Kubernetes Secret (referenced by the VNodePool's `tenantRef.kubeconfigSecret`). The kubeconfig must point to the vcluster API server using an in-cluster service URL (e.g., `https://<name>.<namespace>.svc.cluster.local:443`).
+
+4. **Tenant node registration** — The Registrar adapter connects to the tenant cluster and creates:
+   - A `Node` object with the virtual node's advertised capacity, labels (`vnode.kroderdev.io/managed: true`), and any configured taints.
+   - A `Lease` in the `kube-node-lease` namespace to signal node liveness (40s duration).
+
+5. **VNode self-healing** — Each VNode reconciler watches its own CR. If a node is `Pending` or `NotReady`, it requeues itself every 2 seconds to retry registration. Once ready, it stops requeuing. Phase transitions on VNodes trigger a pool reconcile to update the pool's ready count.
+
+6. **Pod translation** — The PodSync reconciler watches VNodePools and lists tenant pods scheduled to ready virtual nodes. For each pod, it:
+   - Strips vcluster-injected service account volumes.
+   - Applies the configured `RuntimeClassName` (default: `kata`) for workload isolation.
+   - Adds tracking labels (`app.kubernetes.io/managed-by: kroderdev-vnode`, pool name, node name, source pod info).
+   - Applies node selector constraints for dedicated/burstable pool modes.
+   - Creates or updates the translated pod on the host cluster.
+
+7. **Status sync** — Host pod status (phase, IP, container statuses) is continuously synced back to the corresponding tenant pod so `kubectl get pods` in the tenant cluster shows accurate state.
+
+8. **Cleanup** — When a VNodePool is deleted, the finalizer (`vnode.kroderdev.io/pool-cleanup`) ensures all VNodes are deregistered from the tenant cluster, all managed host pods are deleted, and all VNode CRs are removed before the pool is finalized.
+
+### Reconciler architecture
+
+The operator runs three independent controllers:
+
+| Controller | Watches | Triggers on | Responsibility |
+|---|---|---|---|
+| **VNodePool** | `VNodePool`, `VNode` | Pool spec changes (generation), VNode phase transitions | Scale nodes up/down, update pool status |
+| **VNode** | `VNode` | Any VNode change | Register/update node in tenant cluster, self-heal |
+| **PodSync** | `VNodePool` | Pool changes | Translate tenant pods to host pods, sync status |
 
 ## API model
 
-The current API is centered on two resources:
+### VNodePool
 
-- `VNodePool`
-  - target cluster reference
-  - desired node count
-  - per-node advertised CPU, memory, and pod capacity
-  - pool mode such as `shared`, `dedicated`, or `burstable`
-  - isolation backend and placement hints
-- `VNode`
-  - one virtual node owned by a pool
-  - advertised capacity
-  - lifecycle phase and conditions
+```yaml
+apiVersion: vnode.kroderdev.io/v1alpha1
+kind: VNodePool
+metadata:
+  name: my-pool
+  namespace: vcluster-tenant-a
+spec:
+  tenantRef:
+    vclusterName: tenant-a
+    vclusterNamespace: vcluster-tenant-a
+    kubeconfigSecret: tenant-a-vnode-kubeconfig
+  nodeCount: 3
+  perNodeResources:
+    cpu: "4"
+    memory: 8Gi
+    pods: 110
+  mode: shared           # shared | dedicated | burstable
+  isolationBackend: kata # RuntimeClass name for pod isolation
+status:
+  phase: Ready           # Pending | Ready | Scaling | Failed | Deleting
+  readyNodes: 3
+  totalNodes: 3
+  conditions:
+    - type: Ready
+      status: "True"
+    - type: Degraded
+      status: "False"
+    - type: PodExecutionReady
+      status: "True"
+```
 
-The long-term direction is to keep the API generic and infrastructure-focused. Product packaging, billing plans, and provider branding should live outside this repository.
+### VNode
+
+```yaml
+apiVersion: vnode.kroderdev.io/v1alpha1
+kind: VNode
+metadata:
+  name: my-pool-1
+  namespace: vcluster-tenant-a
+  labels:
+    vnode.kroderdev.io/pool: my-pool
+  annotations:
+    vnode.kroderdev.io/vcluster-name: tenant-a
+    vnode.kroderdev.io/vcluster-namespace: vcluster-tenant-a
+    vnode.kroderdev.io/kubeconfig-secret: tenant-a-vnode-kubeconfig
+spec:
+  poolRef: my-pool
+  capacity:
+    cpu: "4"
+    memory: 8Gi
+    pods: 110
+status:
+  phase: Ready           # Pending | Ready | NotReady | Terminating
+  conditions:
+    - type: KubeconfigResolved
+    - type: Registered
+    - type: Ready
+    - type: Degraded
+```
+
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Inbound Adapters
+        VPR[VNodePoolReconciler]
+        VNR[VNodeReconciler]
+        PSR[PodSyncReconciler]
+    end
+
+    subgraph Domain Services
+        PS[PoolService]
+        NS[NodeService]
+        PES[PodExecutionService]
+        PDS[PodService]
+    end
+
+    subgraph Outbound Adapters
+        NR[NodeRepository]
+        PR[PoolRepository]
+        REG[Registrar]
+        CM[ClientManager]
+        PCC[PodClusterClient]
+        KR[KubeconfigResolver]
+        KA[KataAdapter]
+    end
+
+    VPR --> PS
+    VNR --> NS
+    PSR --> PES
+    PES --> PDS
+
+    PS --> NR
+    PS --> NS
+    NS --> NR
+    NS --> REG
+    PES --> CM
+    PES --> PCC
+    PDS --> KA
+    REG --> CM
+    CM --> KR
+```
+
+The project follows hexagonal architecture (ports and adapters). The domain layer defines interfaces (`ports/`) that are implemented by adapters. Domain services never import Kubernetes types directly.
 
 ## Isolation model
 
@@ -77,7 +206,45 @@ Examples:
 - gVisor
 - other runtime-backed sandboxing strategies
 
-The current default direction is to use Kata for stronger tenant boundaries when running on shared infrastructure.
+The current default direction is to use Kata for stronger tenant boundaries when running on shared infrastructure. The `isolationBackend` field in the VNodePool spec maps directly to a Kubernetes `RuntimeClass` name.
+
+## Configuration
+
+The operator is configured via environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `METRICS_ADDR` | `:8080` | Prometheus metrics endpoint |
+| `HEALTH_PROBE_ADDR` | `:8081` | Health and readiness probes |
+| `LEADER_ELECTION` | `false` | Enable leader election for HA deployments |
+| `DEFAULT_RUNTIME_CLASS` | `kata` | Default RuntimeClass for pod isolation |
+| `HOST_NAMESPACE` | `vnode-system` | Host namespace for operator resources |
+
+## Observability
+
+### Prometheus metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `vnode_host_pod_creates_total` | Counter | Host pods created, by pool |
+| `vnode_host_pod_deletes_total` | Counter | Host pods deleted, by pool |
+| `vnode_pod_status_sync_total` | Counter | Pod status syncs, by pool |
+| `vnode_pod_execution_failures_total` | Counter | Execution failures, by pool |
+
+### Kubernetes events
+
+Events are recorded on VNodePool resources:
+
+- `PodExecutionSynced` (Normal) — pod sync completed successfully
+- `PodExecutionFailed` (Warning) — pod sync encountered errors
+- `PodCleanupComplete` (Normal) — orphaned host pods cleaned up
+- `PodCleanupFailed` (Warning) — cleanup encountered errors
+
+### Status conditions
+
+**VNodePool conditions:** `Ready`, `Degraded`, `PodExecutionReady`
+
+**VNode conditions:** `KubeconfigResolved`, `Registered`, `Ready`, `LeaseActive`, `Degraded`
 
 ## Project status
 
@@ -120,13 +287,35 @@ What is still being completed:
 ```text
 api/v1alpha1/              CRD type definitions
 cmd/vnode/                 main entrypoint
+e2e/                       end-to-end tests
 internal/
-  adapter/                 inbound and outbound adapters
+  adapter/
+    inbound/reconciler/    Kubernetes controllers
+    outbound/
+      kubeclient/          Kubernetes API adapters
+      virtualkubelet/      tenant cluster registration
+      runtime/             isolation runtime (Kata)
   config/                  operator configuration
   domain/
     model/                 domain entities
-    ports/                 interfaces
+    ports/                 interfaces (inbound + outbound)
     service/               application/domain services
+  observability/           Prometheus metrics
+```
+
+## Development
+
+Build and test locally:
+
+```bash
+make test       # unit tests
+make test-e2e   # end-to-end tests with envtest
+make build      # build binary to bin/
+make docker     # build Docker image
+make lint       # run linter
+make generate   # generate deepcopy code
+make manifests  # generate CRD manifests
+make install    # apply CRDs to cluster
 ```
 
 ## Roadmap
@@ -139,15 +328,6 @@ The short version:
 2. Add placement and lifecycle safety for shared and dedicated pools.
 3. Add autoscaling and admission policy.
 4. Harden installation, RBAC, and operational docs.
-
-## Development
-
-Build and test locally:
-
-```bash
-make test
-make build
-```
 
 ## License
 
