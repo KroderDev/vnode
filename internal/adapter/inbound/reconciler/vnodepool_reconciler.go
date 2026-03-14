@@ -204,6 +204,7 @@ func crToPoolModel(cr *v1alpha1.VNodePool) model.VNodePool {
 			Memory: cr.Spec.PerNodeResources.Memory,
 			Pods:   cr.Spec.PerNodeResources.Pods,
 		},
+		DisplayName:     cr.Spec.DisplayName,
 		NodeSelector:    cr.Spec.NodeSelector,
 		Taints:          mapTaints(cr.Spec.Taints),
 		Tolerations:     mapTolerations(cr.Spec.Tolerations),

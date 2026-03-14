@@ -42,6 +42,12 @@ type VNodePoolSpec struct {
 	// Tolerations applied to translated host pods scheduled through this pool.
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// DisplayName is a human-friendly name used for tenant-visible node naming.
+	// When set, nodes are named "vnode-{displayName}-{index}" inside the vCluster.
+	// Defaults to the VNodePool metadata.name if unset.
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // TenantRef identifies the target vcluster.

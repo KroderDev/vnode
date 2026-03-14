@@ -49,6 +49,7 @@ type Toleration struct {
 type VNodePool struct {
 	ID               string
 	Name             string
+	DisplayName      string
 	Namespace        string
 	TenantRef        TenantRef
 	Mode             PoolMode

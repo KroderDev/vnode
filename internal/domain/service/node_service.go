@@ -29,8 +29,13 @@ func (s *NodeService) Provision(ctx context.Context, pool model.VNodePool) (mode
 		return model.VNode{}, fmt.Errorf("listing existing nodes: %w", err)
 	}
 
+	displayName := pool.DisplayName
+	if displayName == "" {
+		displayName = pool.Name
+	}
+
 	node := model.VNode{
-		Name:        fmt.Sprintf("%s-%d", pool.Name, len(existing)+1),
+		Name:        fmt.Sprintf("vnode-%s-%d", displayName, len(existing)+1),
 		Namespace:   pool.Namespace,
 		PoolName:    pool.Name,
 		TenantRef:   pool.TenantRef,

@@ -127,8 +127,8 @@ func TestNodeService_Provision_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if node.Name != "pool-a-1" {
-		t.Errorf("expected name pool-a-1, got %s", node.Name)
+	if node.Name != "vnode-pool-a-1" {
+		t.Errorf("expected name vnode-pool-a-1, got %s", node.Name)
 	}
 	if node.Namespace != "default" {
 		t.Errorf("expected namespace default, got %s", node.Namespace)
@@ -171,8 +171,8 @@ func TestNodeService_Provision_SecondNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if node.Name != "pool-a-2" {
-		t.Errorf("expected name pool-a-2, got %s", node.Name)
+	if node.Name != "vnode-pool-a-2" {
+		t.Errorf("expected name vnode-pool-a-2, got %s", node.Name)
 	}
 }
 
