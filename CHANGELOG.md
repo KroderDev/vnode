@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0](https://github.com/KroderDev/vnode/compare/v1.3.0...v1.4.0) (2026-03-14)
+
+
+### Features
+
+* **naming:** pool & vnode display name format ([77192e3](https://github.com/KroderDev/vnode/commit/77192e3d18d0470d7f9da2275d74adc361ab79dc))
+
+
+### Bug Fixes
+
+* vnode role defaults to worker ([978bb08](https://github.com/KroderDev/vnode/commit/978bb08fa80c3ae840a0024ddff2ba5e674ed8ba))
+* workflow doesn't passing the build version ([d8b701d](https://github.com/KroderDev/vnode/commit/d8b701d2941d63cc0f4ff8c3e467faf651f2d3bf))
+
 ## [1.3.0](https://github.com/KroderDev/vnode/compare/v1.2.7...v1.3.0) (2026-03-14)
 
 
