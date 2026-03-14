@@ -3,11 +3,16 @@ package service_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/service"
 )
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
+}
 
 // mockNodeRepo implements ports.NodeRepository with configurable errors.
 type mockNodeRepo struct {
@@ -113,7 +118,7 @@ func (r *mockRegistrar) UpdateNodeStatus(_ context.Context, node model.VNode, _ 
 func TestNodeService_Provision_Success(t *testing.T) {
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	pool := model.VNodePool{
 		Name:             "pool-a",
@@ -158,7 +163,7 @@ func TestNodeService_Provision_SecondNode(t *testing.T) {
 		},
 	}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	pool := model.VNodePool{
 		Name:             "pool-a",
@@ -179,7 +184,7 @@ func TestNodeService_Provision_SecondNode(t *testing.T) {
 func TestNodeService_Provision_Conditions(t *testing.T) {
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	pool := model.VNodePool{
 		Name: "pool", Namespace: "default",
@@ -228,7 +233,7 @@ func TestNodeService_Provision_Conditions(t *testing.T) {
 func TestNodeService_Provision_ListError(t *testing.T) {
 	repo := &mockNodeRepo{listErr: errors.New("list failed")}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	pool := model.VNodePool{Name: "pool", Namespace: "default", TenantRef: model.TenantRef{VClusterNamespace: "ns"}}
 	_, err := svc.Provision(context.Background(), pool)
@@ -243,7 +248,7 @@ func TestNodeService_Provision_ListError(t *testing.T) {
 func TestNodeService_Provision_SaveError(t *testing.T) {
 	repo := &mockNodeRepo{saveErr: errors.New("save failed")}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	pool := model.VNodePool{Name: "pool", Namespace: "default", PerNodeResources: model.ResourceList{}, TenantRef: model.TenantRef{VClusterNamespace: "ns"}}
 	_, err := svc.Provision(context.Background(), pool)
@@ -256,7 +261,7 @@ func TestNodeService_Provision_RegisterError(t *testing.T) {
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
 	reg.registerErr = errors.New("register failed")
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	pool := model.VNodePool{Name: "pool", Namespace: "default", PerNodeResources: model.ResourceList{}, TenantRef: model.TenantRef{VClusterNamespace: "ns"}}
 	node, err := svc.Provision(context.Background(), pool)
@@ -276,7 +281,7 @@ func TestNodeService_Deprovision_Success(t *testing.T) {
 	repo := &mockNodeRepo{nodes: []model.VNode{node}}
 	reg := newMockRegistrar()
 	reg.registered["pool-a-1"] = true
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.Deprovision(context.Background(), node)
 	if err != nil {
@@ -294,7 +299,7 @@ func TestNodeService_Deprovision_SaveError(t *testing.T) {
 	node := model.VNode{Name: "node-1", Namespace: "ns"}
 	repo := &mockNodeRepo{saveErr: errors.New("save failed")}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.Deprovision(context.Background(), node)
 	if err == nil {
@@ -302,16 +307,17 @@ func TestNodeService_Deprovision_SaveError(t *testing.T) {
 	}
 }
 
-func TestNodeService_Deprovision_DeregisterError(t *testing.T) {
+func TestNodeService_Deprovision_DeregisterError_BestEffort(t *testing.T) {
 	node := model.VNode{Name: "node-1", Namespace: "ns"}
 	repo := &mockNodeRepo{nodes: []model.VNode{node}}
 	reg := newMockRegistrar()
 	reg.deregisterErr = errors.New("deregister failed")
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
+	// Deregistration failures are best-effort — node CR should still be deleted.
 	err := svc.Deprovision(context.Background(), node)
-	if err == nil {
-		t.Fatal("expected error from Deregister")
+	if err != nil {
+		t.Fatalf("expected best-effort deregistration to succeed, got: %v", err)
 	}
 }
 
@@ -319,7 +325,7 @@ func TestNodeService_Deprovision_DeleteError(t *testing.T) {
 	node := model.VNode{Name: "node-1", Namespace: "ns"}
 	repo := &mockNodeRepo{nodes: []model.VNode{node}, deleteErr: errors.New("delete failed")}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.Deprovision(context.Background(), node)
 	if err == nil {
@@ -340,7 +346,7 @@ func TestNodeService_UpdateStatus_Success(t *testing.T) {
 	}
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err != nil {
@@ -363,7 +369,7 @@ func TestNodeService_UpdateStatus_TransitionsToReady(t *testing.T) {
 	}
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err != nil {
@@ -386,7 +392,7 @@ func TestNodeService_UpdateStatus_Error(t *testing.T) {
 	}
 	repo := &mockNodeRepo{saveErr: errors.New("save failed")}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err == nil {
@@ -399,7 +405,7 @@ func TestNodeService_UpdateStatus_IgnoresContextCanceledFromRegistrar(t *testing
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
 	reg.updateErr = context.Canceled
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err != nil {
@@ -424,7 +430,7 @@ func TestNodeService_UpdateStatus_RetriesInitialRegistrationAfterTransientFailur
 	}
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err != nil {
@@ -460,7 +466,7 @@ func TestNodeService_UpdateStatus_PersistsRetryFailure(t *testing.T) {
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
 	reg.registerErr = errors.New("still timing out")
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err == nil {
@@ -481,7 +487,7 @@ func TestNodeService_UpdateStatus_SkipsUninitializedNode(t *testing.T) {
 	node := model.VNode{Name: "node-1", Namespace: "ns"}
 	repo := &mockNodeRepo{}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err != nil {
@@ -499,7 +505,7 @@ func TestNodeService_UpdateStatus_IgnoresContextCanceledFromSave(t *testing.T) {
 	node := model.VNode{Name: "node-1", Namespace: "ns"}
 	repo := &mockNodeRepo{saveErr: context.Canceled}
 	reg := newMockRegistrar()
-	svc := service.NewNodeService(repo, reg)
+	svc := service.NewNodeService(discardLogger(), repo, reg)
 
 	err := svc.UpdateStatus(context.Background(), node)
 	if err != nil {

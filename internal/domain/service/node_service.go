@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/kroderdev/vnode/internal/domain/model"
 	"github.com/kroderdev/vnode/internal/domain/ports"
@@ -11,15 +12,21 @@ import (
 
 // NodeService implements ports.NodeLifecycle.
 type NodeService struct {
+	log       *slog.Logger
 	nodeRepo  ports.NodeRepository
 	registrar ports.NodeRegistrar
 }
 
-func NewNodeService(nodeRepo ports.NodeRepository, registrar ports.NodeRegistrar) *NodeService {
+func NewNodeService(log *slog.Logger, nodeRepo ports.NodeRepository, registrar ports.NodeRegistrar) *NodeService {
 	return &NodeService{
+		log:       log,
 		nodeRepo:  nodeRepo,
 		registrar: registrar,
 	}
+}
+
+func (s *NodeService) logDeregisterWarning(node model.VNode, err error) {
+	s.log.Warn("best-effort deregistration failed (vCluster may be gone)", "node", node.Name, "error", err)
 }
 
 func (s *NodeService) Provision(ctx context.Context, pool model.VNodePool) (model.VNode, error) {
@@ -83,8 +90,12 @@ func (s *NodeService) Deprovision(ctx context.Context, node model.VNode) error {
 		return fmt.Errorf("marking node %s as terminating: %w", node.Name, err)
 	}
 
+	// Best-effort deregistration: if the vCluster is already gone or the
+	// kubeconfig secret was deleted, the tenant-side node no longer exists
+	// anyway. Log the error but proceed with VNode CR deletion so the
+	// finalizer can be removed and the pool can be cleaned up.
 	if err := s.registrar.Deregister(ctx, node, node.TenantRef); err != nil {
-		return fmt.Errorf("deregistering node %s: %w", node.Name, err)
+		s.logDeregisterWarning(node, err)
 	}
 
 	if err := s.nodeRepo.Delete(ctx, node.Namespace, node.Name); err != nil {

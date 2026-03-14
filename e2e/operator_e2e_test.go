@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -470,7 +471,7 @@ func setupSuite() {
 		resolver := kubeclient.NewSecretKubeconfigResolver(mgr.GetClient())
 		tenantClients := virtualkubelet.NewTenantClientManager(resolver)
 		registrar := virtualkubelet.NewRegistrar(tenantClients)
-		nodeSvc := service.NewNodeService(nodeRepo, registrar)
+		nodeSvc := service.NewNodeService(slog.Default(), nodeRepo, registrar)
 		poolSvc := service.NewPoolService(nodeRepo, nodeSvc)
 		podSvc := service.NewPodService(nilRuntime{})
 		podExecSvc := service.NewPodExecutionService(nodeRepo, hostPods, podSvc, tenantClients)

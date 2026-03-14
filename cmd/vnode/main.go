@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/kroderdev/vnode/api/v1alpha1"
@@ -68,7 +69,7 @@ func main() {
 	kataRuntime := runtime.NewKataAdapter(cfg.DefaultRuntimeClass)
 
 	// Build domain services
-	nodeSvc := service.NewNodeService(nodeRepo, registrar)
+	nodeSvc := service.NewNodeService(slog.Default(), nodeRepo, registrar)
 	poolSvc := service.NewPoolService(nodeRepo, nodeSvc)
 	podSvc := service.NewPodService(kataRuntime)
 	podExecSvc := service.NewPodExecutionService(nodeRepo, hostPods, podSvc, tenantClients)
