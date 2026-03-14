@@ -27,59 +27,35 @@ It avoids product-specific packaging and focuses on what the operator must do we
 
 Those belong in higher-level platform services that translate commercial plans into `VNodePool` policy.
 
-## Revised phases
+## Phases
 
 ### Phase 1: Operator foundation
 
-Status: mostly complete
+Status: **complete**
 
-Objectives:
-
-- define `VNodePool` and `VNode` CRDs
-- implement reconcile loops
-- establish domain model and service boundaries
-- implement basic validation and unit tests
-
-Exit criteria:
-
-- CRDs generated and installable
-- operator starts and reconciles objects
-- unit tests cover domain logic
+- `VNodePool` and `VNode` CRDs defined and installable
+- Reconcile loops for pool, node, and pod sync
+- Hexagonal domain model with ports and adapters
+- Unit tests covering domain logic
 
 ### Phase 2: Real execution path
 
-Status: mostly complete
+Status: **complete**
 
-Objectives:
-
-- replace stub registration with real target-cluster node registration
-- create a real per-tenant connection path from kubeconfig secrets
-- implement pod lifecycle handling for translated workloads on the host cluster
-- sync host pod status back to the target cluster
-- ensure teardown removes nodes, leases, and translated workloads cleanly
-
-Exit criteria:
-
-- a `VNodePool` creates Ready nodes in a target cluster
-- scheduling a pod to a virtual node results in host execution
-- tenant-side pod status reflects host-side execution
-- deleting a pool leaves no orphaned node or workload artifacts
-
-Current state:
-
-- tenant kubeconfig resolution is wired into a cached tenant client manager
-- `VNode` reconciliation registers real target-cluster Nodes and Leases
-- translated host pods are created and cleaned up
-- host pod status is mirrored back into tenant pods
-- pod execution conditions, events, and metrics exist
-
-Remaining work in this phase:
-
-- finish host pod drift replacement behavior for tenant pod spec changes
-- reduce conflict and shutdown noise in status and cleanup paths
-- tighten cleanup behavior for reschedules and partial failures
+- Tenant kubeconfig resolution from Kubernetes Secrets via cached client manager
+- Real target-cluster Node and Lease registration
+- Virtual nodes appear with correct capacity, labels (`kubernetes.io/os`, `kubernetes.io/arch`), role (`node-role.kubernetes.io/vnode`), and version info (`vnode/<release>`)
+- Translated host pods created with configurable RuntimeClass (default: Kata)
+- Host pod status mirrored back into tenant pods
+- Pod execution conditions, events, and Prometheus metrics
+- Pool deletion with finalizer-based cleanup (nodes, leases, host pods)
+- VNode self-healing with 2s requeue for failed registrations
+- VNodePool reconcile decoupled from status churn (GenerationChangedPredicate + phase-only VNode watch)
+- Build-time version injection via ldflags
 
 ### Phase 3: Placement and tenancy policy
+
+Status: **in progress**
 
 Objectives:
 
@@ -100,19 +76,20 @@ Exit criteria:
 
 Objectives:
 
-- admission validation and defaulting
-- structured conditions and event reporting
-- Prometheus metrics
+- admission validation and defaulting webhooks
 - Helm chart and installation docs
-- end-to-end tests with virtual clusters
+- end-to-end tests with real virtual clusters
 - RBAC tightening and security review
 - shutdown-tolerant reconcile behavior and conflict-safe status writes
+- host pod drift reconciliation (spec changes trigger safe replacement)
+- structured error handling for transient failures
 
 Exit criteria:
 
-- repeatable install path
+- repeatable install path via Helm
 - observable reconciliation and runtime behavior
 - validated failure and cleanup flows
+- comprehensive RBAC with least-privilege
 
 ### Phase 5: Autoscaling
 
