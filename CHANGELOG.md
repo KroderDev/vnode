@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/KroderDev/vnode/compare/v1.4.2...v1.4.3) (2026-03-14)
+
+
+### Bug Fixes
+
+* **reconcile:** add hostname label to vnodes and reduce reconcile loop noise ([eb0b9c1](https://github.com/KroderDev/vnode/commit/eb0b9c1b93afb0e75f67687d46cf3af508556292))
+
 ## [1.4.2](https://github.com/KroderDev/vnode/compare/v1.4.1...v1.4.2) (2026-03-14)
 
 
