@@ -9,8 +9,8 @@ import (
 
 func TestKataAdapter_DefaultClassName(t *testing.T) {
 	adapter := runtime.NewKataAdapter("")
-	if adapter.RuntimeClassName() != "kata" {
-		t.Errorf("expected default 'kata', got %s", adapter.RuntimeClassName())
+	if adapter.RuntimeClassName() != "" {
+		t.Errorf("expected default empty, got %s", adapter.RuntimeClassName())
 	}
 }
 

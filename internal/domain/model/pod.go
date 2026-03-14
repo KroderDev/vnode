@@ -15,6 +15,9 @@ type PodSpec struct {
 	ServiceAccountName string
 	RuntimeClassName   string
 	NodeSelector       map[string]string
+
+	// Deleting is true when the pod has a non-zero DeletionTimestamp.
+	Deleting bool
 }
 
 // Container is a minimal container spec.

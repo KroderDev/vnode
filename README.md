@@ -68,7 +68,7 @@ sequenceDiagram
 
 6. **Pod translation** — The PodSync reconciler watches VNodePools and lists tenant pods scheduled to ready virtual nodes. For each pod, it:
    - Strips vcluster-injected service account volumes.
-   - Applies the configured `RuntimeClassName` (default: `kata`) for workload isolation.
+   - Applies the configured `RuntimeClassName` (if set) for workload isolation.
    - Adds tracking labels (`app.kubernetes.io/managed-by: kroderdev-vnode`, pool name, node name, source pod info).
    - Applies node selector constraints for dedicated/burstable pool modes.
    - Creates or updates the translated pod on the host cluster.
@@ -217,7 +217,7 @@ The operator is configured via environment variables:
 | `METRICS_ADDR` | `:8080` | Prometheus metrics endpoint |
 | `HEALTH_PROBE_ADDR` | `:8081` | Health and readiness probes |
 | `LEADER_ELECTION` | `false` | Enable leader election for HA deployments |
-| `DEFAULT_RUNTIME_CLASS` | `kata` | Default RuntimeClass for pod isolation |
+| `DEFAULT_RUNTIME_CLASS` | _(empty)_ | Default RuntimeClass for pod isolation (e.g. `kata`, `gvisor`) |
 | `HOST_NAMESPACE` | `vnode-system` | Host namespace for operator resources |
 
 ## Observability

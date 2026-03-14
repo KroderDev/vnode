@@ -22,7 +22,7 @@ func Default() Config {
 		HealthProbeAddr:     envOrDefault("HEALTH_PROBE_ADDR", ":8081"),
 		LeaderElection:      os.Getenv("LEADER_ELECTION") == "true",
 		LeaderElectionID:    "vnode-operator.kroderdev.io",
-		DefaultRuntimeClass: envOrDefault("DEFAULT_RUNTIME_CLASS", "kata"),
+		DefaultRuntimeClass: envOrDefault("DEFAULT_RUNTIME_CLASS", ""),
 		HostNamespace:       envOrDefault("HOST_NAMESPACE", "vnode-system"),
 	}
 }

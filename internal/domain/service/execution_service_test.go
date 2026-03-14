@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/kroderdev/vnode/internal/domain/model"
@@ -133,27 +134,46 @@ func TestEnsureHostPod_RecreatesOnSpecDrift(t *testing.T) {
 	host := newFakeClusterClient(existing)
 
 	created, deleted, err := ensureHostPod(context.Background(), host, desired)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !errors.Is(err, errPodTerminating) {
+		t.Fatalf("expected errPodTerminating, got %v", err)
 	}
-	if !created {
-		t.Fatal("expected host pod to be created after drift replacement")
+	if created {
+		t.Fatal("expected host pod NOT to be created while terminating")
 	}
 	if !deleted {
-		t.Fatal("expected drifted host pod to be deleted before recreation")
+		t.Fatal("expected drifted host pod to be deleted")
 	}
-	if host.createCalls != 1 {
-		t.Fatalf("expected 1 create call, got %d", host.createCalls)
+	if host.createCalls != 0 {
+		t.Fatalf("expected 0 create calls (deferred until next reconcile), got %d", host.createCalls)
 	}
 	if host.deleteCalls != 1 {
 		t.Fatalf("expected 1 delete call, got %d", host.deleteCalls)
 	}
-	got, err := host.GetPod(context.Background(), desired.Namespace, desired.Name)
-	if err != nil {
-		t.Fatalf("expected recreated pod: %v", err)
+}
+
+func TestEnsureHostPod_SkipsTerminatingPod(t *testing.T) {
+	existing := model.PodSpec{
+		Name:      "host-pod",
+		Namespace: "tenant-a",
+		Labels:    map[string]string{model.LabelManagedBy: model.LabelManagedByValue, model.LabelVNodePool: "pool-a"},
+		Deleting:  true,
+		Containers: []model.Container{{
+			Name:  "app",
+			Image: "nginx:1.25",
+		}},
 	}
-	if got.Containers[0].Image != "nginx:1.26" {
-		t.Fatalf("expected recreated pod image to match desired spec, got %s", got.Containers[0].Image)
+
+	host := newFakeClusterClient(existing)
+
+	created, deleted, err := ensureHostPod(context.Background(), host, existing)
+	if !errors.Is(err, errPodTerminating) {
+		t.Fatalf("expected errPodTerminating, got %v", err)
+	}
+	if created || deleted {
+		t.Fatal("expected no create or delete when pod is terminating")
+	}
+	if host.createCalls != 0 || host.deleteCalls != 0 {
+		t.Fatalf("expected no API calls, got %d creates, %d deletes", host.createCalls, host.deleteCalls)
 	}
 }
 

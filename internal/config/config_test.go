@@ -29,8 +29,8 @@ func TestDefault_Values(t *testing.T) {
 	if cfg.LeaderElectionID != "vnode-operator.kroderdev.io" {
 		t.Errorf("expected LeaderElectionID vnode-operator.kroderdev.io, got %s", cfg.LeaderElectionID)
 	}
-	if cfg.DefaultRuntimeClass != "kata" {
-		t.Errorf("expected DefaultRuntimeClass kata, got %s", cfg.DefaultRuntimeClass)
+	if cfg.DefaultRuntimeClass != "" {
+		t.Errorf("expected DefaultRuntimeClass empty, got %s", cfg.DefaultRuntimeClass)
 	}
 	if cfg.HostNamespace != "vnode-system" {
 		t.Errorf("expected HostNamespace vnode-system, got %s", cfg.HostNamespace)

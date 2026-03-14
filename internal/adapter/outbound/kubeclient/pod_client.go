@@ -129,6 +129,7 @@ func podToSpec(pod *corev1.Pod) model.PodSpec {
 		NodeName:           pod.Spec.NodeName,
 		ServiceAccountName: pod.Spec.ServiceAccountName,
 		NodeSelector:       pod.Spec.NodeSelector,
+		Deleting:           !pod.DeletionTimestamp.IsZero(),
 		Containers:         make([]model.Container, 0, len(pod.Spec.Containers)),
 		Volumes:            make([]model.Volume, 0, len(pod.Spec.Volumes)),
 	}

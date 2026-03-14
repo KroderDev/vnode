@@ -89,6 +89,14 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 		if !isTerminalPod(sourcePod) {
 			created, deleted, err := ensureHostPod(ctx, s.hostPods, translation.TargetPod)
 			if err != nil {
+				if errors.Is(err, errPodTerminating) {
+					// Host pod is being deleted; skip this pod and let the
+					// next reconcile handle it once deletion completes.
+					if deleted {
+						result.DeletedHostPods++
+					}
+					continue
+				}
 				if isIgnorableShutdownError(err) {
 					return result, nil
 				}
@@ -213,6 +221,10 @@ func listTenantPodsForNodes(ctx context.Context, clientset kubernetes.Interface,
 	return result, nil
 }
 
+// errPodTerminating is returned when the host pod exists but is being deleted.
+// The reconciler should requeue and wait for deletion to complete.
+var errPodTerminating = fmt.Errorf("host pod is terminating, waiting for deletion to complete")
+
 func ensureHostPod(ctx context.Context, host ports.ClusterClient, pod model.PodSpec) (bool, bool, error) {
 	current, err := host.GetPod(ctx, pod.Namespace, pod.Name)
 	if err != nil {
@@ -221,16 +233,21 @@ func ensureHostPod(ctx context.Context, host ports.ClusterClient, pod model.PodS
 		}
 		return false, false, err
 	}
+	// If the existing pod is being deleted, wait for it to be fully removed
+	// before attempting to create a replacement.
+	if current.Deleting {
+		return false, false, errPodTerminating
+	}
 	if podSpecsEqual(*current, pod) {
 		return false, false, nil
 	}
 	if err := host.DeletePod(ctx, pod.Namespace, pod.Name); err != nil {
 		return false, false, err
 	}
-	if err := host.CreatePod(ctx, pod); err != nil {
-		return false, true, err
-	}
-	return true, true, nil
+	// After requesting deletion, the pod enters Terminating state.
+	// Return errPodTerminating so the reconciler requeues and waits
+	// for the pod to be fully removed before creating the replacement.
+	return false, true, errPodTerminating
 }
 
 func updateTenantPodStatus(ctx context.Context, clientset kubernetes.Interface, namespace, name string, status model.PodStatus) error {

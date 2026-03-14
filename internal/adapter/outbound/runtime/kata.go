@@ -8,9 +8,6 @@ type KataAdapter struct {
 }
 
 func NewKataAdapter(runtimeClassName string) *KataAdapter {
-	if runtimeClassName == "" {
-		runtimeClassName = "kata"
-	}
 	return &KataAdapter{runtimeClassName: runtimeClassName}
 }
 
