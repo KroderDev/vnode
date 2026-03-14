@@ -12,9 +12,10 @@ type PodSpec struct {
 	Volumes    []Volume
 
 	// Fields to strip/override during translation
-	ServiceAccountName string
-	RuntimeClassName   string
-	NodeSelector       map[string]string
+	ServiceAccountName           string
+	AutomountServiceAccountToken *bool
+	RuntimeClassName             string
+	NodeSelector                 map[string]string
 
 	// Deleting is true when the pod has a non-zero DeletionTimestamp.
 	Deleting bool
@@ -114,11 +115,13 @@ type TranslateOpts struct {
 // TranslatePod converts a vcluster pod spec into a host cluster pod spec.
 // It strips vcluster-injected fields and applies the isolation RuntimeClass.
 func TranslatePod(source PodSpec, opts TranslateOpts) PodTranslation {
+	disableAutomount := false
 	target := PodSpec{
-		Name:             fmt.Sprintf("%s-%s-%s", opts.VNodeName, source.Namespace, source.Name),
-		Namespace:        opts.TargetNamespace,
-		RuntimeClassName: opts.RuntimeClass,
-		NodeSelector:     opts.NodeSelector,
+		Name:                         fmt.Sprintf("%s-%s-%s", opts.VNodeName, source.Namespace, source.Name),
+		Namespace:                    opts.TargetNamespace,
+		AutomountServiceAccountToken: &disableAutomount,
+		RuntimeClassName:             opts.RuntimeClass,
+		NodeSelector:                 opts.NodeSelector,
 		Labels: map[string]string{
 			LabelManagedBy:     LabelManagedByValue,
 			LabelVNodePool:     opts.PoolName,

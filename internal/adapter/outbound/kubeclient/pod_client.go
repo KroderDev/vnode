@@ -93,10 +93,11 @@ func podSpecToK8sPod(pod model.PodSpec) *corev1.Pod {
 			Labels:    pod.Labels,
 		},
 		Spec: corev1.PodSpec{
-			NodeName:           pod.NodeName,
-			ServiceAccountName: pod.ServiceAccountName,
-			RuntimeClassName:   stringPtrOrNil(pod.RuntimeClassName),
-			NodeSelector:       pod.NodeSelector,
+			NodeName:                     pod.NodeName,
+			ServiceAccountName:           pod.ServiceAccountName,
+			AutomountServiceAccountToken: pod.AutomountServiceAccountToken,
+			RuntimeClassName:             stringPtrOrNil(pod.RuntimeClassName),
+			NodeSelector:                 pod.NodeSelector,
 			Containers:         make([]corev1.Container, 0, len(pod.Containers)),
 			Volumes:            make([]corev1.Volume, 0, len(pod.Volumes)),
 		},
@@ -123,13 +124,14 @@ func podSpecToK8sPod(pod model.PodSpec) *corev1.Pod {
 
 func podToSpec(pod *corev1.Pod) model.PodSpec {
 	spec := model.PodSpec{
-		Name:               pod.Name,
-		Namespace:          pod.Namespace,
-		Labels:             pod.Labels,
-		NodeName:           pod.Spec.NodeName,
-		ServiceAccountName: pod.Spec.ServiceAccountName,
-		NodeSelector:       pod.Spec.NodeSelector,
-		Deleting:           !pod.DeletionTimestamp.IsZero(),
+		Name:                         pod.Name,
+		Namespace:                    pod.Namespace,
+		Labels:                       pod.Labels,
+		NodeName:                     pod.Spec.NodeName,
+		ServiceAccountName:           pod.Spec.ServiceAccountName,
+		AutomountServiceAccountToken: pod.Spec.AutomountServiceAccountToken,
+		NodeSelector:                 pod.Spec.NodeSelector,
+		Deleting:                     !pod.DeletionTimestamp.IsZero(),
 		Containers:         make([]model.Container, 0, len(pod.Spec.Containers)),
 		Volumes:            make([]model.Volume, 0, len(pod.Spec.Volumes)),
 	}

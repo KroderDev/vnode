@@ -323,11 +323,22 @@ func podSpecsEqual(a, b model.PodSpec) bool {
 	return a.Name == b.Name &&
 		a.Namespace == b.Namespace &&
 		normalizeServiceAccount(a.ServiceAccountName) == normalizeServiceAccount(b.ServiceAccountName) &&
+		boolPtrEqual(a.AutomountServiceAccountToken, b.AutomountServiceAccountToken) &&
 		a.RuntimeClassName == b.RuntimeClassName &&
 		stringMapEqual(a.Labels, b.Labels) &&
 		stringMapEqual(a.NodeSelector, b.NodeSelector) &&
 		containersEqual(a.Containers, b.Containers) &&
 		volumesEqual(a.Volumes, b.Volumes)
+}
+
+func boolPtrEqual(a, b *bool) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }
 
 func normalizeServiceAccount(name string) string {
