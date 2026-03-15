@@ -313,7 +313,6 @@ func TestTranslatePod_AllVolumeTypesPreservedExceptProjected(t *testing.T) {
 		model.VolumeTypeSecret,
 		model.VolumeTypeEmptyDir,
 		model.VolumeTypePVC,
-		model.VolumeTypeHostPath,
 		model.VolumeTypeOther,
 	}
 	var vols []model.Volume
@@ -324,7 +323,39 @@ func TestTranslatePod_AllVolumeTypesPreservedExceptProjected(t *testing.T) {
 	source := model.PodSpec{Name: "all-types", Namespace: "ns", Volumes: vols}
 	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 	if len(result.TargetPod.Volumes) != len(types) {
-		t.Errorf("expected %d volumes (all non-projected types), got %d", len(types), len(result.TargetPod.Volumes))
+		t.Errorf("expected %d volumes (all allowed non-projected types), got %d", len(types), len(result.TargetPod.Volumes))
+	}
+}
+
+func TestTranslatePod_StripsMountsForFilteredVolumes(t *testing.T) {
+	source := model.PodSpec{
+		Name:      "mount-filter",
+		Namespace: "ns",
+		Containers: []model.Container{
+			{
+				Name:  "main",
+				Image: "img",
+				VolumeMounts: []model.VolumeMount{
+					{Name: "host-root", MountPath: "/host"},
+					{Name: "projected-token", MountPath: "/var/run/secrets/tokens"},
+					{Name: "data", MountPath: "/data"},
+				},
+			},
+		},
+		Volumes: []model.Volume{
+			{Name: "host-root", Type: model.VolumeTypeHostPath, Source: "/"},
+			{Name: "projected-token", Type: model.VolumeTypeProjected},
+			{Name: "data", Type: model.VolumeTypeEmptyDir},
+		},
+	}
+
+	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
+	mounts := result.TargetPod.Containers[0].VolumeMounts
+	if len(mounts) != 1 {
+		t.Fatalf("expected only safe mounts to remain, got %d", len(mounts))
+	}
+	if mounts[0].Name != "data" {
+		t.Fatalf("expected data mount to remain, got %s", mounts[0].Name)
 	}
 }
 

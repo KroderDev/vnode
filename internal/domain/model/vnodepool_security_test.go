@@ -58,20 +58,18 @@ func TestSecurity_EmptyModeAccepted(t *testing.T) {
 	}
 }
 
-// TestSecurity_KubeconfigSecretNoNamespaceValidation documents that the
-// TenantRef does not enforce any namespace constraints — a pool can reference
-// a kubeconfig secret by name alone with no namespace boundary check at the
-// domain model level.
-func TestSecurity_KubeconfigSecretNoNamespaceValidation(t *testing.T) {
+// TestSecurity_KubeconfigSecretNamespaceBoundary verifies that a pool cannot
+// target a tenant namespace different from the pool namespace.
+func TestSecurity_KubeconfigSecretNamespaceBoundary(t *testing.T) {
 	pool := model.VNodePool{
-		Name: "pool",
+		Name:      "pool",
+		Namespace: "tenant-a",
 		TenantRef: model.TenantRef{
 			KubeconfigSecret:  "secret-in-other-ns",
 			VClusterNamespace: "other-namespace",
 		},
 	}
-	// GAP: No namespace boundary enforcement at model layer
-	if err := pool.Validate(); err != nil {
-		t.Fatalf("expected validation to pass (no namespace check), got: %v", err)
+	if err := pool.Validate(); err == nil {
+		t.Fatal("expected validation error for cross-namespace tenantRef")
 	}
 }

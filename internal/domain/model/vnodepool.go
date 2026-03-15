@@ -74,6 +74,9 @@ func (p *VNodePool) Validate() error {
 	if p.TenantRef.KubeconfigSecret == "" {
 		return fmt.Errorf("tenantRef.kubeconfigSecret is required")
 	}
+	if p.TenantRef.VClusterNamespace != "" && p.Namespace != "" && p.TenantRef.VClusterNamespace != p.Namespace {
+		return fmt.Errorf("tenantRef.vClusterNamespace must match pool namespace")
+	}
 	if p.NodeCount < 0 {
 		return fmt.Errorf("nodeCount must be >= 0")
 	}

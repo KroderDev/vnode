@@ -12,15 +12,17 @@ import (
 // subdirectory suffixes are NOT stripped. This documents the current behavior
 // as a known gap — a tenant pod could mount a subdirectory of the SA token
 // path and bypass the stripping logic.
+// TestSecurity_SAMountPathVariants verifies that canonical SA token mount paths
+// and simple path variants are stripped during translation.
 func TestSecurity_SAMountPathVariants(t *testing.T) {
 	variants := []struct {
 		path      string
 		expectStr bool // true = expected to be stripped
 	}{
 		{"/var/run/secrets/kubernetes.io/serviceaccount", true},
-		{"/var/run/secrets/kubernetes.io/serviceaccount/", false},       // GAP: trailing slash
-		{"/var/run/secrets/kubernetes.io/serviceaccount/token", false},  // GAP: subdirectory
-		{"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", false}, // GAP: subdirectory
+		{"/var/run/secrets/kubernetes.io/serviceaccount/", true},
+		{"/var/run/secrets/kubernetes.io/serviceaccount/token", true},
+		{"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", true},
 		{"/var/run/secrets", false},
 		{"/tmp", false},
 	}
@@ -88,9 +90,9 @@ func TestSecurity_LabelSpecialCharacters(t *testing.T) {
 	source := model.PodSpec{
 		Name: "test", Namespace: "ns",
 		Labels: map[string]string{
-			"key-with-newline":     "value\ninjection",
-			"key-with-null":        "value\x00null",
-			"key-with-long-value":  strings.Repeat("a", 10000),
+			"key-with-newline":        "value\ninjection",
+			"key-with-null":           "value\x00null",
+			"key-with-long-value":     strings.Repeat("a", 10000),
 			strings.Repeat("k", 1000): "long-key",
 		},
 	}
@@ -129,7 +131,9 @@ func TestSecurity_LargeNumberOfLabels(t *testing.T) {
 // TestSecurity_HostPathVolumesNotFiltered documents that HostPath volumes are
 // NOT filtered during translation. This is a security gap — a tenant pod could
 // mount arbitrary host filesystem paths on the underlying node.
-func TestSecurity_HostPathVolumesNotFiltered(t *testing.T) {
+// TestSecurity_HostPathVolumesFiltered verifies that tenant pods cannot pass
+// host filesystem mounts through translation.
+func TestSecurity_HostPathVolumesFiltered(t *testing.T) {
 	source := model.PodSpec{
 		Name: "test", Namespace: "ns",
 		Volumes: []model.Volume{
@@ -140,14 +144,8 @@ func TestSecurity_HostPathVolumesNotFiltered(t *testing.T) {
 	}
 	result := model.TranslatePod(source, opts("vn", "pool", "host-ns", "kata"))
 
-	// GAP: All HostPath volumes pass through unfiltered
-	if len(result.TargetPod.Volumes) != 3 {
-		t.Errorf("expected 3 HostPath volumes (not filtered), got %d", len(result.TargetPod.Volumes))
-	}
-	for _, v := range result.TargetPod.Volumes {
-		if v.Type != model.VolumeTypeHostPath {
-			t.Errorf("unexpected volume type: %s", v.Type)
-		}
+	if len(result.TargetPod.Volumes) != 0 {
+		t.Errorf("expected all HostPath volumes to be filtered, got %d", len(result.TargetPod.Volumes))
 	}
 }
 

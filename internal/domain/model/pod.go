@@ -1,13 +1,16 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // PodSpec is a domain representation of a pod, decoupled from K8s types.
 type PodSpec struct {
-	Name      string
-	Namespace string
-	Labels    map[string]string
-	NodeName  string
+	Name       string
+	Namespace  string
+	Labels     map[string]string
+	NodeName   string
 	Containers []Container
 	Volumes    []Volume
 
@@ -46,22 +49,22 @@ type EnvVar struct {
 
 // Volume represents a volume in a pod.
 type Volume struct {
-	Name     string
-	Type     VolumeType
-	Source   string
+	Name   string
+	Type   VolumeType
+	Source string
 }
 
 // VolumeType identifies the kind of volume.
 type VolumeType string
 
 const (
-	VolumeTypeProjected   VolumeType = "projected"
-	VolumeTypeConfigMap   VolumeType = "configMap"
-	VolumeTypeSecret      VolumeType = "secret"
-	VolumeTypeEmptyDir    VolumeType = "emptyDir"
-	VolumeTypePVC         VolumeType = "pvc"
-	VolumeTypeHostPath    VolumeType = "hostPath"
-	VolumeTypeOther       VolumeType = "other"
+	VolumeTypeProjected VolumeType = "projected"
+	VolumeTypeConfigMap VolumeType = "configMap"
+	VolumeTypeSecret    VolumeType = "secret"
+	VolumeTypeEmptyDir  VolumeType = "emptyDir"
+	VolumeTypePVC       VolumeType = "pvc"
+	VolumeTypeHostPath  VolumeType = "hostPath"
+	VolumeTypeOther     VolumeType = "other"
 )
 
 // VolumeMount links a container to a volume.
@@ -95,12 +98,12 @@ type PodTranslation struct {
 }
 
 const (
-	LabelManagedBy        = "app.kubernetes.io/managed-by"
-	LabelManagedByValue   = "kroderdev-vnode"
-	LabelVNodePool        = "vnode.kroderdev.io/pool"
-	LabelVNodeName        = "vnode.kroderdev.io/node-name"
-	LabelSourcePodName    = "vnode.kroderdev.io/source-pod-name"
-	LabelSourcePodNS      = "vnode.kroderdev.io/source-pod-namespace"
+	LabelManagedBy      = "app.kubernetes.io/managed-by"
+	LabelManagedByValue = "kroderdev-vnode"
+	LabelVNodePool      = "vnode.kroderdev.io/pool"
+	LabelVNodeName      = "vnode.kroderdev.io/node-name"
+	LabelSourcePodName  = "vnode.kroderdev.io/source-pod-name"
+	LabelSourcePodNS    = "vnode.kroderdev.io/source-pod-namespace"
 )
 
 // TranslateOpts holds options for pod translation.
@@ -116,6 +119,7 @@ type TranslateOpts struct {
 // It strips vcluster-injected fields and applies the isolation RuntimeClass.
 func TranslatePod(source PodSpec, opts TranslateOpts) PodTranslation {
 	disableAutomount := false
+	translatedVolumes, strippedVolumes := filterVolumes(source.Volumes, source.Namespace)
 	target := PodSpec{
 		Name:                         fmt.Sprintf("%s-%s-%s", opts.VNodeName, source.Namespace, source.Name),
 		Namespace:                    opts.TargetNamespace,
@@ -129,8 +133,8 @@ func TranslatePod(source PodSpec, opts TranslateOpts) PodTranslation {
 			LabelSourcePodName: source.Name,
 			LabelSourcePodNS:   source.Namespace,
 		},
-		Containers: translateContainers(source.Containers),
-		Volumes:    filterVolumes(source.Volumes, source.Namespace),
+		Containers: translateContainers(source.Containers, strippedVolumes),
+		Volumes:    translatedVolumes,
 	}
 
 	// Copy non-vnode labels from source
@@ -147,7 +151,7 @@ func TranslatePod(source PodSpec, opts TranslateOpts) PodTranslation {
 }
 
 // translateContainers copies containers and strips SA token volume mounts.
-func translateContainers(containers []Container) []Container {
+func translateContainers(containers []Container, strippedVolumes map[string]struct{}) []Container {
 	result := make([]Container, 0, len(containers))
 	for _, c := range containers {
 		translated := Container{
@@ -163,6 +167,9 @@ func translateContainers(containers []Container) []Container {
 			if isServiceAccountMount(vm) {
 				continue
 			}
+			if _, stripped := strippedVolumes[vm.Name]; stripped {
+				continue
+			}
 			translated.VolumeMounts = append(translated.VolumeMounts, vm)
 		}
 		result = append(result, translated)
@@ -172,10 +179,12 @@ func translateContainers(containers []Container) []Container {
 
 // filterVolumes removes projected SA token volumes and namespaces ConfigMap/Secret
 // sources to avoid collisions between tenant namespaces in the host cluster.
-func filterVolumes(volumes []Volume, sourceNamespace string) []Volume {
+func filterVolumes(volumes []Volume, sourceNamespace string) ([]Volume, map[string]struct{}) {
 	result := make([]Volume, 0, len(volumes))
+	stripped := make(map[string]struct{})
 	for _, v := range volumes {
-		if v.Type == VolumeTypeProjected {
+		if v.Type == VolumeTypeProjected || v.Type == VolumeTypeHostPath {
+			stripped[v.Name] = struct{}{}
 			continue
 		}
 		if v.Type == VolumeTypeConfigMap || v.Type == VolumeTypeSecret {
@@ -183,7 +192,7 @@ func filterVolumes(volumes []Volume, sourceNamespace string) []Volume {
 		}
 		result = append(result, v)
 	}
-	return result
+	return result, stripped
 }
 
 // VolumeResourceRef identifies a resource (ConfigMap or Secret) that needs to
@@ -214,5 +223,8 @@ func (t PodTranslation) ResourceRefs() []VolumeResourceRef {
 }
 
 func isServiceAccountMount(vm VolumeMount) bool {
-	return vm.MountPath == "/var/run/secrets/kubernetes.io/serviceaccount"
+	const serviceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+	trimmed := strings.TrimRight(vm.MountPath, "/")
+	return trimmed == serviceAccountPath || strings.HasPrefix(trimmed, serviceAccountPath+"/")
 }
