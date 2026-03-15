@@ -154,8 +154,16 @@ func (r *Registrar) UpdateNodeStatus(ctx context.Context, node model.VNode, tena
 			return fmt.Errorf("getting tenant node %s: %w", node.Name, err)
 		}
 
-		current.Status.Capacity = buildResources(node.Capacity)
-		current.Status.Allocatable = buildResources(node.Allocatable)
+		cap, err := buildResources(node.Capacity)
+		if err != nil {
+			return fmt.Errorf("building capacity resources: %w", err)
+		}
+		alloc, err := buildResources(node.Allocatable)
+		if err != nil {
+			return fmt.Errorf("building allocatable resources: %w", err)
+		}
+		current.Status.Capacity = cap
+		current.Status.Allocatable = alloc
 		current.Status.Conditions = buildNodeConditions(node)
 		current.Status.NodeInfo = corev1.NodeSystemInfo{
 			KubeletVersion:          "vnode/" + version.Version,
@@ -263,18 +271,26 @@ func upsertLease(ctx context.Context, clientset kubernetes.Interface, nodeName s
 	return nil
 }
 
-func buildResources(in model.ResourceList) corev1.ResourceList {
+func buildResources(in model.ResourceList) (corev1.ResourceList, error) {
 	out := corev1.ResourceList{}
 	if in.CPU != "" {
-		out[corev1.ResourceCPU] = resource.MustParse(in.CPU)
+		q, err := resource.ParseQuantity(in.CPU)
+		if err != nil {
+			return nil, fmt.Errorf("parsing CPU quantity %q: %w", in.CPU, err)
+		}
+		out[corev1.ResourceCPU] = q
 	}
 	if in.Memory != "" {
-		out[corev1.ResourceMemory] = resource.MustParse(in.Memory)
+		q, err := resource.ParseQuantity(in.Memory)
+		if err != nil {
+			return nil, fmt.Errorf("parsing Memory quantity %q: %w", in.Memory, err)
+		}
+		out[corev1.ResourceMemory] = q
 	}
 	if in.Pods > 0 {
 		out[corev1.ResourcePods] = *resource.NewQuantity(int64(in.Pods), resource.DecimalSI)
 	}
-	return out
+	return out, nil
 }
 
 func buildNodeConditions(node model.VNode) []corev1.NodeCondition {
