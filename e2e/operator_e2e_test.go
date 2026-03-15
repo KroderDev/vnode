@@ -104,19 +104,19 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 	})
 
 	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
-		node, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-a-1", metav1.GetOptions{})
+		node, err := suiteClientset.CoreV1().Nodes().Get(ctx, "vnode-pool-a-1", metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 		if node.Labels["vnode.kroderdev.io/pool"] != "pool-a" {
 			return errors.New("tenant node labels not applied")
 		}
-		lease, err := suiteClientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, "pool-a-1", metav1.GetOptions{})
+		lease, err := suiteClientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, "vnode-pool-a-1", metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
-		if lease.Name != "pool-a-1" {
-			return errors.New("expected tenant lease for pool-a-1")
+		if lease.Name != "vnode-pool-a-1" {
+			return errors.New("expected tenant lease for vnode-pool-a-1")
 		}
 		return nil
 	})
@@ -130,7 +130,7 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 			},
 		},
 		Spec: corev1.PodSpec{
-			NodeName: "pool-a-1",
+			NodeName: "vnode-pool-a-1",
 			Containers: []corev1.Container{
 				{Name: "main", Image: "nginx:stable"},
 			},
@@ -140,7 +140,7 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		t.Fatalf("create source pod: %v", err)
 	}
 
-	hostPodName := "pool-a-1-" + ns + "-workload-a"
+	hostPodName := "vnode-pool-a-1-" + ns + "-workload-a"
 	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
 		hostPod := &corev1.Pod{}
 		if err := k8sClient.Get(ctx, client.ObjectKey{Name: hostPodName, Namespace: ns}, hostPod); err != nil {
@@ -252,12 +252,12 @@ func TestVNodePoolLifecycleE2E(t *testing.T) {
 		if len(nodes.Items) != 0 {
 			return errors.New("vnodes still exist after pool deletion")
 		}
-		if _, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-a-1", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
+		if _, err := suiteClientset.CoreV1().Nodes().Get(ctx, "vnode-pool-a-1", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
 			return err
 		} else if err == nil {
 			return errors.New("tenant node still exists after pool deletion")
 		}
-		if _, err := suiteClientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, "pool-a-1", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
+		if _, err := suiteClientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, "vnode-pool-a-1", metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
 			return err
 		} else if err == nil {
 			return errors.New("tenant lease still exists after pool deletion")
