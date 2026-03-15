@@ -11,17 +11,19 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var _ ports.ClusterClient = (*PodClusterClient)(nil)
 
 type PodClusterClient struct {
-	client client.Client
+	client    client.Client
+	clientset kubernetes.Interface
 }
 
-func NewPodClusterClient(c client.Client) *PodClusterClient {
-	return &PodClusterClient{client: c}
+func NewPodClusterClient(c client.Client, cs kubernetes.Interface) *PodClusterClient {
+	return &PodClusterClient{client: c, clientset: cs}
 }
 
 func (c *PodClusterClient) CreatePod(ctx context.Context, pod model.PodSpec) error {
@@ -86,13 +88,13 @@ func (c *PodClusterClient) ListPodsByLabels(ctx context.Context, namespace strin
 }
 
 func (c *PodClusterClient) EnsureConfigMap(ctx context.Context, namespace, name string, data map[string]string, binaryData map[string][]byte, labels map[string]string) error {
-	var existing corev1.ConfigMap
-	err := c.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &existing)
+	cms := c.clientset.CoreV1().ConfigMaps(namespace)
+	existing, err := cms.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
-		cm := &corev1.ConfigMap{
+		_, err = cms.Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: namespace,
@@ -100,35 +102,37 @@ func (c *PodClusterClient) EnsureConfigMap(ctx context.Context, namespace, name 
 			},
 			Data:       data,
 			BinaryData: binaryData,
-		}
-		return c.client.Create(ctx, cm)
+		}, metav1.CreateOptions{})
+		return err
 	}
 	existing.Data = data
 	existing.BinaryData = binaryData
 	existing.Labels = labels
-	return c.client.Update(ctx, &existing)
+	_, err = cms.Update(ctx, existing, metav1.UpdateOptions{})
+	return err
 }
 
 func (c *PodClusterClient) EnsureSecret(ctx context.Context, namespace, name string, data map[string][]byte, labels map[string]string) error {
-	var existing corev1.Secret
-	err := c.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &existing)
+	secrets := c.clientset.CoreV1().Secrets(namespace)
+	existing, err := secrets.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
-		secret := &corev1.Secret{
+		_, err = secrets.Create(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: namespace,
 				Labels:    labels,
 			},
 			Data: data,
-		}
-		return c.client.Create(ctx, secret)
+		}, metav1.CreateOptions{})
+		return err
 	}
 	existing.Data = data
 	existing.Labels = labels
-	return c.client.Update(ctx, &existing)
+	_, err = secrets.Update(ctx, existing, metav1.UpdateOptions{})
+	return err
 }
 
 func podSpecToK8sPod(pod model.PodSpec) *corev1.Pod {

@@ -466,8 +466,13 @@ func setupSuite() {
 			return
 		}
 
+		hostClientset, err := kubernetes.NewForConfig(cfg)
+		if err != nil {
+			suiteSetupErr = err
+			return
+		}
 		nodeRepo := kubeclient.NewNodeRepository(mgr.GetClient())
-		hostPods := kubeclient.NewPodClusterClient(mgr.GetClient())
+		hostPods := kubeclient.NewPodClusterClient(mgr.GetClient(), hostClientset)
 		resolver := kubeclient.NewSecretKubeconfigResolver(mgr.GetClient())
 		tenantClients := virtualkubelet.NewTenantClientManager(resolver)
 		registrar := virtualkubelet.NewRegistrar(tenantClients)
