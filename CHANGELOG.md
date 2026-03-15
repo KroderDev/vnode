@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/KroderDev/vnode/compare/v1.4.5...v1.5.0) (2026-03-15)
+
+
+### Features
+
+* **podsync:** sync ConfigMaps and Secrets from tenant to host namespace ([7d38912](https://github.com/KroderDev/vnode/commit/7d389125bc71f5dbef288a9d45d1590eb145a577))
+
 ## [1.4.5](https://github.com/KroderDev/vnode/compare/v1.4.4...v1.4.5) (2026-03-15)
 
 
