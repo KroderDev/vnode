@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.4.5](https://github.com/KroderDev/vnode/compare/v1.4.4...v1.4.5) (2026-03-15)
+
+
+### Bug Fixes
+
+* **podsync:** break create/delete loop by disabling SA token automount on host pods ([fd004d8](https://github.com/KroderDev/vnode/commit/fd004d82dde9d7a420e555a364220daf76449e76))
+
+
+### CI/CD
+
+* add tests changelog type ([4f05d2b](https://github.com/KroderDev/vnode/commit/4f05d2b973a63c8c2a1fba782569aefaebe52640))
+
+
+### Tests
+
+* add security tests for pod translation, validation, and credential handling ([38b15d0](https://github.com/KroderDev/vnode/commit/38b15d0ac9acb83c1130b4f6121a05e0bf9ab9b8))
+
 ## [1.4.4](https://github.com/KroderDev/vnode/compare/v1.4.3...v1.4.4) (2026-03-14)
 
 
