@@ -14,6 +14,11 @@ type ClusterClient interface {
 	GetPod(ctx context.Context, namespace, name string) (*model.PodSpec, error)
 	GetPodStatus(ctx context.Context, namespace, name string) (*model.PodStatus, error)
 	ListPodsByLabels(ctx context.Context, namespace string, labels map[string]string) ([]model.PodSpec, error)
+
+	// EnsureConfigMap creates or updates a ConfigMap in the target namespace.
+	EnsureConfigMap(ctx context.Context, namespace, name string, data map[string]string, binaryData map[string][]byte, labels map[string]string) error
+	// EnsureSecret creates or updates a Secret in the target namespace.
+	EnsureSecret(ctx context.Context, namespace, name string, data map[string][]byte, labels map[string]string) error
 }
 
 // NodeRegistrar registers and manages virtual nodes in a target cluster.

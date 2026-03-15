@@ -106,6 +106,14 @@ func (t *fakeTranslator) SyncStatus(_ context.Context, status model.PodStatus) (
 	return status, nil
 }
 
+func (c *fakeClusterClient) EnsureConfigMap(_ context.Context, _, _ string, _ map[string]string, _ map[string][]byte, _ map[string]string) error {
+	return nil
+}
+
+func (c *fakeClusterClient) EnsureSecret(_ context.Context, _, _ string, _ map[string][]byte, _ map[string]string) error {
+	return nil
+}
+
 var _ ports.ClusterClient = (*fakeClusterClient)(nil)
 var _ ports.PodTranslator = (*fakeTranslator)(nil)
 

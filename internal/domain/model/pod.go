@@ -130,7 +130,7 @@ func TranslatePod(source PodSpec, opts TranslateOpts) PodTranslation {
 			LabelSourcePodNS:   source.Namespace,
 		},
 		Containers: translateContainers(source.Containers),
-		Volumes:    filterVolumes(source.Volumes),
+		Volumes:    filterVolumes(source.Volumes, source.Namespace),
 	}
 
 	// Copy non-vnode labels from source
@@ -170,16 +170,47 @@ func translateContainers(containers []Container) []Container {
 	return result
 }
 
-// filterVolumes removes projected SA token volumes injected by vcluster.
-func filterVolumes(volumes []Volume) []Volume {
+// filterVolumes removes projected SA token volumes and namespaces ConfigMap/Secret
+// sources to avoid collisions between tenant namespaces in the host cluster.
+func filterVolumes(volumes []Volume, sourceNamespace string) []Volume {
 	result := make([]Volume, 0, len(volumes))
 	for _, v := range volumes {
 		if v.Type == VolumeTypeProjected {
 			continue
 		}
+		if v.Type == VolumeTypeConfigMap || v.Type == VolumeTypeSecret {
+			v.Source = sourceNamespace + "-" + v.Source
+		}
 		result = append(result, v)
 	}
 	return result
+}
+
+// VolumeResourceRef identifies a resource (ConfigMap or Secret) that needs to
+// be synced from the tenant cluster to the host namespace.
+type VolumeResourceRef struct {
+	Type            VolumeType // VolumeTypeConfigMap or VolumeTypeSecret
+	SourceName      string     // Original name in the tenant cluster
+	SourceNamespace string     // Namespace in the tenant cluster
+	TargetName      string     // Namespaced name in the host cluster
+}
+
+// ResourceRefs returns the ConfigMap/Secret references that need to be synced.
+func (t PodTranslation) ResourceRefs() []VolumeResourceRef {
+	var refs []VolumeResourceRef
+	sourceNS := t.SourcePod.Namespace
+	for _, sv := range t.SourcePod.Volumes {
+		if sv.Type != VolumeTypeConfigMap && sv.Type != VolumeTypeSecret {
+			continue
+		}
+		refs = append(refs, VolumeResourceRef{
+			Type:            sv.Type,
+			SourceName:      sv.Source,
+			SourceNamespace: sourceNS,
+			TargetName:      sourceNS + "-" + sv.Source,
+		})
+	}
+	return refs
 }
 
 func isServiceAccountMount(vm VolumeMount) bool {

@@ -85,6 +85,52 @@ func (c *PodClusterClient) ListPodsByLabels(ctx context.Context, namespace strin
 	return result, nil
 }
 
+func (c *PodClusterClient) EnsureConfigMap(ctx context.Context, namespace, name string, data map[string]string, binaryData map[string][]byte, labels map[string]string) error {
+	var existing corev1.ConfigMap
+	err := c.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &existing)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+				Labels:    labels,
+			},
+			Data:       data,
+			BinaryData: binaryData,
+		}
+		return c.client.Create(ctx, cm)
+	}
+	existing.Data = data
+	existing.BinaryData = binaryData
+	existing.Labels = labels
+	return c.client.Update(ctx, &existing)
+}
+
+func (c *PodClusterClient) EnsureSecret(ctx context.Context, namespace, name string, data map[string][]byte, labels map[string]string) error {
+	var existing corev1.Secret
+	err := c.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &existing)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+				Labels:    labels,
+			},
+			Data: data,
+		}
+		return c.client.Create(ctx, secret)
+	}
+	existing.Data = data
+	existing.Labels = labels
+	return c.client.Update(ctx, &existing)
+}
+
 func podSpecToK8sPod(pod model.PodSpec) *corev1.Pod {
 	k8sPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

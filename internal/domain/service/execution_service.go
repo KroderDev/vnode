@@ -86,6 +86,14 @@ func (s *PodExecutionService) ReconcilePool(ctx context.Context, pool model.VNod
 
 		desired[keyForPod(translation.TargetPod.Namespace, translation.TargetPod.Name)] = struct{}{}
 
+		// Sync ConfigMaps and Secrets referenced by the pod from tenant to host
+		if err := syncPodResources(ctx, clientset, s.hostPods, translation, pool); err != nil {
+			if isIgnorableShutdownError(err) {
+				return result, nil
+			}
+			return result, fmt.Errorf("syncing resources for pod %s/%s: %w", sourcePod.Namespace, sourcePod.Name, err)
+		}
+
 		if !isTerminalPod(sourcePod) {
 			created, deleted, err := ensureHostPod(ctx, s.hostPods, translation.TargetPod)
 			if err != nil {
@@ -487,6 +495,46 @@ func volumeFromCore(in corev1.Volume) model.Volume {
 		out.Type = model.VolumeTypeProjected
 	}
 	return out
+}
+
+func syncPodResources(ctx context.Context, clientset kubernetes.Interface, host ports.ClusterClient, translation model.PodTranslation, pool model.VNodePool) error {
+	refs := translation.ResourceRefs()
+	if len(refs) == 0 {
+		return nil
+	}
+
+	labels := map[string]string{
+		model.LabelManagedBy: model.LabelManagedByValue,
+		model.LabelVNodePool: pool.Name,
+	}
+
+	for _, ref := range refs {
+		switch ref.Type {
+		case model.VolumeTypeConfigMap:
+			cm, err := clientset.CoreV1().ConfigMaps(ref.SourceNamespace).Get(ctx, ref.SourceName, metav1.GetOptions{})
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					continue // ConfigMap doesn't exist in tenant; skip
+				}
+				return fmt.Errorf("getting tenant ConfigMap %s/%s: %w", ref.SourceNamespace, ref.SourceName, err)
+			}
+			if err := host.EnsureConfigMap(ctx, pool.Namespace, ref.TargetName, cm.Data, cm.BinaryData, labels); err != nil {
+				return fmt.Errorf("ensuring host ConfigMap %s/%s: %w", pool.Namespace, ref.TargetName, err)
+			}
+		case model.VolumeTypeSecret:
+			secret, err := clientset.CoreV1().Secrets(ref.SourceNamespace).Get(ctx, ref.SourceName, metav1.GetOptions{})
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return fmt.Errorf("getting tenant Secret %s/%s: %w", ref.SourceNamespace, ref.SourceName, err)
+			}
+			if err := host.EnsureSecret(ctx, pool.Namespace, ref.TargetName, secret.Data, labels); err != nil {
+				return fmt.Errorf("ensuring host Secret %s/%s: %w", pool.Namespace, ref.TargetName, err)
+			}
+		}
+	}
+	return nil
 }
 
 func isIgnorableShutdownError(err error) bool {
