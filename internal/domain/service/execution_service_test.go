@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 )
 
 type fakeClusterClient struct {
@@ -22,6 +23,8 @@ type fakeClusterClient struct {
 	deleteCalls int
 	createdPods []model.PodSpec
 	deletedKeys []string
+	configMaps  map[string]string
+	secrets     map[string]string
 }
 
 func newFakeClusterClient(pods ...model.PodSpec) *fakeClusterClient {
@@ -106,11 +109,19 @@ func (t *fakeTranslator) SyncStatus(_ context.Context, status model.PodStatus) (
 	return status, nil
 }
 
-func (c *fakeClusterClient) EnsureConfigMap(_ context.Context, _, _ string, _ map[string]string, _ map[string][]byte, _ map[string]string) error {
+func (c *fakeClusterClient) EnsureConfigMap(_ context.Context, namespace, name string, _ map[string]string, _ map[string][]byte, _ map[string]string) error {
+	if c.configMaps == nil {
+		c.configMaps = map[string]string{}
+	}
+	c.configMaps[namespace+"/"+name] = name
 	return nil
 }
 
-func (c *fakeClusterClient) EnsureSecret(_ context.Context, _, _ string, _ map[string][]byte, _ map[string]string) error {
+func (c *fakeClusterClient) EnsureSecret(_ context.Context, namespace, name string, _ map[string][]byte, _ map[string]string) error {
+	if c.secrets == nil {
+		c.secrets = map[string]string{}
+	}
+	c.secrets[namespace+"/"+name] = name
 	return nil
 }
 
@@ -258,4 +269,78 @@ func TestPodFromCore_PreservesExecutionFields(t *testing.T) {
 
 func resourceMustParse(value string) resource.Quantity {
 	return resource.MustParse(value)
+}
+
+func TestSyncPodResources_AvoidsCollidingTargetNames(t *testing.T) {
+	host := newFakeClusterClient()
+	clientset := kubefake.NewClientset(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "a-b"},
+			Data:       map[string]string{"value": "one"},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "b-c", Namespace: "a"},
+			Data:       map[string]string{"value": "two"},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "a-b"},
+			Data:       map[string][]byte{"token": []byte("one")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "b-c", Namespace: "a"},
+			Data:       map[string][]byte{"token": []byte("two")},
+		},
+	)
+	pool := model.VNodePool{Name: "pool", Namespace: "host-ns"}
+
+	translationA := model.TranslatePod(model.PodSpec{
+		Name:      "pod-a",
+		Namespace: "a-b",
+		Volumes: []model.Volume{
+			{Name: "cfg", Type: model.VolumeTypeConfigMap, Source: "c"},
+			{Name: "sec", Type: model.VolumeTypeSecret, Source: "c"},
+		},
+	}, model.TranslateOpts{VNodeName: "vn", PoolName: pool.Name, TargetNamespace: pool.Namespace, RuntimeClass: "kata"})
+	translationB := model.TranslatePod(model.PodSpec{
+		Name:      "pod-b",
+		Namespace: "a",
+		Volumes: []model.Volume{
+			{Name: "cfg", Type: model.VolumeTypeConfigMap, Source: "b-c"},
+			{Name: "sec", Type: model.VolumeTypeSecret, Source: "b-c"},
+		},
+	}, model.TranslateOpts{VNodeName: "vn", PoolName: pool.Name, TargetNamespace: pool.Namespace, RuntimeClass: "kata"})
+
+	if err := syncPodResources(context.Background(), clientset, host, translationA, pool); err != nil {
+		t.Fatalf("syncing translation A: %v", err)
+	}
+	if err := syncPodResources(context.Background(), clientset, host, translationB, pool); err != nil {
+		t.Fatalf("syncing translation B: %v", err)
+	}
+
+	refsA := translationA.ResourceRefs()
+	refsB := translationB.ResourceRefs()
+	if refsA[0].TargetName == refsB[0].TargetName {
+		t.Fatalf("expected configmap targets to differ, got %q", refsA[0].TargetName)
+	}
+	if refsA[1].TargetName == refsB[1].TargetName {
+		t.Fatalf("expected secret targets to differ, got %q", refsA[1].TargetName)
+	}
+	if len(host.configMaps) != 2 {
+		t.Fatalf("expected 2 synced configmaps, got %d", len(host.configMaps))
+	}
+	if len(host.secrets) != 2 {
+		t.Fatalf("expected 2 synced secrets, got %d", len(host.secrets))
+	}
+	if _, ok := host.configMaps["host-ns/"+refsA[0].TargetName]; !ok {
+		t.Fatalf("expected synced configmap %q", refsA[0].TargetName)
+	}
+	if _, ok := host.configMaps["host-ns/"+refsB[0].TargetName]; !ok {
+		t.Fatalf("expected synced configmap %q", refsB[0].TargetName)
+	}
+	if _, ok := host.secrets["host-ns/"+refsA[1].TargetName]; !ok {
+		t.Fatalf("expected synced secret %q", refsA[1].TargetName)
+	}
+	if _, ok := host.secrets["host-ns/"+refsB[1].TargetName]; !ok {
+		t.Fatalf("expected synced secret %q", refsB[1].TargetName)
+	}
 }

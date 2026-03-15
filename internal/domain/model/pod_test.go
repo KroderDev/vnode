@@ -429,3 +429,47 @@ func TestTranslatePod_WithoutNodeSelector(t *testing.T) {
 		t.Errorf("expected nil node selector for shared mode, got %v", result.TargetPod.NodeSelector)
 	}
 }
+
+func TestTranslatePod_ResourceNamesAvoidNamespaceNameCollisions(t *testing.T) {
+	sourceA := model.PodSpec{
+		Name:      "app-a",
+		Namespace: "a-b",
+		Volumes: []model.Volume{
+			{Name: "cfg", Type: model.VolumeTypeConfigMap, Source: "c"},
+			{Name: "sec", Type: model.VolumeTypeSecret, Source: "c"},
+		},
+	}
+	sourceB := model.PodSpec{
+		Name:      "app-b",
+		Namespace: "a",
+		Volumes: []model.Volume{
+			{Name: "cfg", Type: model.VolumeTypeConfigMap, Source: "b-c"},
+			{Name: "sec", Type: model.VolumeTypeSecret, Source: "b-c"},
+		},
+	}
+
+	resultA := model.TranslatePod(sourceA, opts("vn", "pool", "host-ns", "kata"))
+	resultB := model.TranslatePod(sourceB, opts("vn", "pool", "host-ns", "kata"))
+
+	if resultA.TargetPod.Volumes[0].Source == resultB.TargetPod.Volumes[0].Source {
+		t.Fatalf("expected configmap resource names to differ, got %q", resultA.TargetPod.Volumes[0].Source)
+	}
+	if resultA.TargetPod.Volumes[1].Source == resultB.TargetPod.Volumes[1].Source {
+		t.Fatalf("expected secret resource names to differ, got %q", resultA.TargetPod.Volumes[1].Source)
+	}
+
+	refsA := resultA.ResourceRefs()
+	refsB := resultB.ResourceRefs()
+	if refsA[0].TargetName == refsB[0].TargetName {
+		t.Fatalf("expected configmap sync targets to differ, got %q", refsA[0].TargetName)
+	}
+	if refsA[1].TargetName == refsB[1].TargetName {
+		t.Fatalf("expected secret sync targets to differ, got %q", refsA[1].TargetName)
+	}
+	if refsA[0].TargetName != resultA.TargetPod.Volumes[0].Source {
+		t.Fatalf("expected configmap target name %q to match translated volume source %q", refsA[0].TargetName, resultA.TargetPod.Volumes[0].Source)
+	}
+	if refsB[1].TargetName != resultB.TargetPod.Volumes[1].Source {
+		t.Fatalf("expected secret target name %q to match translated volume source %q", refsB[1].TargetName, resultB.TargetPod.Volumes[1].Source)
+	}
+}

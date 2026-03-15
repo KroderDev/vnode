@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -188,7 +190,7 @@ func filterVolumes(volumes []Volume, sourceNamespace string) ([]Volume, map[stri
 			continue
 		}
 		if v.Type == VolumeTypeConfigMap || v.Type == VolumeTypeSecret {
-			v.Source = sourceNamespace + "-" + v.Source
+			v.Source = syncedResourceName(sourceNamespace, v.Source)
 		}
 		result = append(result, v)
 	}
@@ -216,10 +218,23 @@ func (t PodTranslation) ResourceRefs() []VolumeResourceRef {
 			Type:            sv.Type,
 			SourceName:      sv.Source,
 			SourceNamespace: sourceNS,
-			TargetName:      sourceNS + "-" + sv.Source,
+			TargetName:      syncedResourceName(sourceNS, sv.Source),
 		})
 	}
 	return refs
+}
+
+func syncedResourceName(sourceNamespace, sourceName string) string {
+	const maxKubernetesNameLength = 253
+
+	base := sourceNamespace + "-" + sourceName
+	sum := sha256.Sum256([]byte(sourceNamespace + "\x00" + sourceName))
+	suffix := hex.EncodeToString(sum[:8])
+	maxBaseLength := maxKubernetesNameLength - len(suffix) - 1
+	if len(base) > maxBaseLength {
+		base = base[:maxBaseLength]
+	}
+	return base + "-" + suffix
 }
 
 func isServiceAccountMount(vm VolumeMount) bool {
