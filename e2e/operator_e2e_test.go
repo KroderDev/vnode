@@ -388,7 +388,7 @@ func TestVNodePoolRecoversAfterKubeconfigSecretFixE2E(t *testing.T) {
 	})
 
 	waitFor(t, 10*time.Second, 200*time.Millisecond, func() error {
-		node, err := suiteClientset.CoreV1().Nodes().Get(ctx, "pool-retry-1", metav1.GetOptions{})
+		node, err := suiteClientset.CoreV1().Nodes().Get(ctx, "vnode-pool-retry-1", metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
