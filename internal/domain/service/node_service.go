@@ -117,9 +117,10 @@ func (s *NodeService) UpdateStatus(ctx context.Context, node model.VNode) error 
 			if isIgnorableStatusError(err) {
 				return nil
 			}
-			// Only save if the phase actually changed — avoids triggering a
-			// watch-based re-reconcile when the node is already NotReady.
-			if node.Phase != model.NodePhaseNotReady {
+			// Save if phase changed or if registration-failed conditions are
+			// not yet on the node. Skip when already NotReady with the correct
+			// conditions to avoid triggering a watch-based re-reconcile loop.
+			if node.Phase != model.NodePhaseNotReady || !hasRegisteredCondition(node) {
 				node.Phase = model.NodePhaseNotReady
 				node.Conditions = registrationFailedConditions(err)
 				if saveErr := s.nodeRepo.Save(ctx, node); saveErr != nil {
@@ -201,6 +202,16 @@ func shouldRetryRegistration(node model.VNode) bool {
 			continue
 		}
 		return !condition.Status
+	}
+	// No Registered condition at all means registration hasn't completed yet.
+	return true
+}
+
+func hasRegisteredCondition(node model.VNode) bool {
+	for _, c := range node.Conditions {
+		if c.Type == model.NodeConditionRegistered {
+			return true
+		}
 	}
 	return false
 }
