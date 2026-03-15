@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.1](https://github.com/KroderDev/vnode/compare/v1.5.0...v1.5.1) (2026-03-15)
+
+
+### Bug Fixes
+
+* **e2e:** correct expected tenant node name in lifecycle test ([765434d](https://github.com/KroderDev/vnode/commit/765434d224367f90bd3e869fd3e9a49b569b6a35))
+* **e2e:** correct expected tenant node name in recovery test ([4c73ca0](https://github.com/KroderDev/vnode/commit/4c73ca0ef031110284ff5b1c622f475efbadc7cf))
+* **podsync:** use direct clientset for ConfigMap/Secret ops to avoid cache RBAC errors ([209349b](https://github.com/KroderDev/vnode/commit/209349bff7b9bf918da70c24181a7809ddc8bde4))
+* **reconcile:** fix race where Registered condition is lost on new VNodes ([cca6b67](https://github.com/KroderDev/vnode/commit/cca6b6796c3f29fd0cdd6566b79f36aa0b75be20))
+
+
+### CI/CD
+
+* add branch build on push ([443253a](https://github.com/KroderDev/vnode/commit/443253a1dd5a94aab86595069b6924cccda8f072))
+
 ## [1.5.0](https://github.com/KroderDev/vnode/compare/v1.4.5...v1.5.0) (2026-03-15)
 
 
